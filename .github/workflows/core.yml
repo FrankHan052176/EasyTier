@@ -212,9 +212,9 @@ jobs:
             export CXX=clang++
             export CARGO_TERM_COLOR=always
 
-            cargo build --release --verbose --target $TARGET --package=easytier-web --features=embed
+            cargo build --release --verbose --target $TARGET --package=easytier-web --features full
             mv ./target/$TARGET/release/easytier-web ./target/$TARGET/release/easytier-web-embed
-            cargo build --release --verbose --target $TARGET
+            cargo build --release --verbose --target $TARGET --features full
 
       - name: Install UPX
         if: ${{ matrix.OS != 'macos-latest' }}
