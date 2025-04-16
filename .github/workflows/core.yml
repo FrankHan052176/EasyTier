@@ -168,7 +168,7 @@ jobs:
           # kcp-sys need this to gen ffi bindings. without this clang may fail to find some libc headers such as bits/libc-header-start.h
           export KCP_SYS_EXTRA_HEADER_PATH=/usr/include/musl-cross
           if [[ $OS =~ ^ubuntu.*$ && $TARGET =~ ^mips.*$ ]]; then
-            cargo +nightly build -r --verbose --target $TARGET -Z build-std=std,panic_abort --no-default-features --features mips --package=easytier
+            cargo +nightly build -r --verbose --features full --target $TARGET -Z build-std=std,panic_abort --no-default-features --features mips --package=easytier
           else
             if [[ $OS =~ ^windows.*$ ]]; then
               SUFFIX=.exe
