@@ -33,6 +33,7 @@ message FlagsInConfig {
 
   // enable magic dns or not
   bool accept_dns = 22;
+  string custom_dns = 23;
 }
 
 message RpcDescriptor {

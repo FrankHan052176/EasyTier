@@ -37,6 +37,7 @@ pub fn gen_default_flags() -> Flags {
         disable_kcp_input: false,
         disable_relay_kcp: true,
         accept_dns: false,
+        custom_dns: "udp://8.8.8.8:53".to_string(),
     }
 }
 

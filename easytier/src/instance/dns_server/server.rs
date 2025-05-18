@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use hickory_proto::op::Edns;
 use hickory_proto::rr;
 use hickory_proto::rr::LowerName;
-use hickory_resolver::config::ResolverOpts;
+use hickory_resolver::config::{NameServerConfig, ResolverOpts};
 use hickory_resolver::name_server::TokioConnectionProvider;
 use hickory_resolver::system_conf::read_system_conf;
 use hickory_server::authority::{AuthorityObject, Catalog, ZoneType};
@@ -11,10 +11,11 @@ use hickory_server::store::forwarder::ForwardConfig;
 use hickory_server::store::{forwarder::ForwardAuthority, in_memory::InMemoryAuthority};
 use hickory_server::ServerFuture;
 use std::io;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
+use hickory_proto::xfer::Protocol;
 use tokio::net::{TcpListener, UdpSocket};
 use tokio::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use tokio::task::JoinSet;
@@ -65,6 +66,52 @@ impl RequestHandler for CatalogRequestHandler {
     }
 }
 
+pub fn parse_nameserver_str(addr: &str) -> Option<NameServerConfig> {
+    // 默认处理没有协议前缀的情况
+    if !addr.contains("://") {
+        let parts: Vec<&str> = addr.split(':').collect();
+        if parts.len() != 2 {
+            return None;
+        }
+        let ip: IpAddr = parts[0].parse().ok()?;
+        let port: u16 = parts[1].parse().ok()?;
+        return Some(NameServerConfig {
+            socket_addr: SocketAddr::new(ip, port),
+            protocol: Protocol::Udp,
+            tls_dns_name: None,
+            http_endpoint: None,
+            bind_addr: None,
+            trust_negative_responses: false,
+        });
+    }
+
+    let parts: Vec<&str> = addr.split("://").collect();
+    let protocol = match parts[0] {
+        "udp" => Protocol::Udp,
+        "tcp" => Protocol::Tcp,
+        "tls" => Protocol::Tls,
+        "https" => Protocol::Https,
+        _ => return None,
+    };
+
+    let addr_parts: Vec<&str> = parts[1].split(':').collect();
+    if addr_parts.len() != 2 {
+        return None;
+    }
+
+    let ip: IpAddr = addr_parts[0].parse().ok()?;
+    let port: u16 = addr_parts[1].parse().ok()?;
+
+    Some(NameServerConfig {
+        socket_addr: SocketAddr::new(ip, port),
+        protocol,
+        tls_dns_name: None,
+        http_endpoint: None,
+        bind_addr: None,
+        trust_negative_responses: false,
+    })
+}
+
 pub fn build_authority(domain: &str, records: &[Record]) -> Result<InMemoryAuthority> {
     let zone = rr::Name::from_str(domain)?;
     let mut authority = InMemoryAuthority::empty(zone.clone(), ZoneType::Primary, false);
@@ -88,23 +135,16 @@ impl Server {
             catalog.upsert(zone.clone().into(), vec![Arc::new(authroty)]);
         }
 
-        // use forwarder authority for the root zone
-        let system_conf =
-            read_system_conf().unwrap_or((get_default_resolver_config(), ResolverOpts::default()));
+        let (_original_config, opts) = read_system_conf().unwrap_or((get_default_resolver_config(), ResolverOpts::default()));
+
+        let name_servers = ["udp://8.8.8.8:53", "udp://1.1.1.1:53"]
+            .iter()
+            .filter_map(|&s| parse_nameserver_str(s))
+            .collect::<Vec<_>>();
+
         let forward_config = ForwardConfig {
-            name_servers: system_conf
-                .0
-                .name_servers()
-                .iter()
-                .cloned()
-                .filter(|x| {
-                    !config
-                        .excluded_forward_nameservers()
-                        .contains(&x.socket_addr.ip())
-                })
-                .collect::<Vec<_>>()
-                .into(),
-            options: Some(system_conf.1),
+            name_servers: name_servers.into(),
+            options: Some(opts),
         };
         let auth = ForwardAuthority::builder_with_config(
             forward_config,
@@ -112,7 +152,6 @@ impl Server {
         )
         .build()
         .unwrap();
-
         catalog.upsert(rr::Name::from_str(".")?.into(), vec![Arc::new(auth)]);
 
         let catalog = Arc::new(RwLock::new(catalog));

@@ -47,6 +47,7 @@ static GLOBAL_MIMALLOC: GlobalMiMalloc = GlobalMiMalloc;
 
 #[cfg(feature = "jemalloc")]
 use jemalloc_ctl::{epoch, stats, Access as _, AsName as _};
+use easytier::common::config::Flags;
 
 #[cfg(feature = "jemalloc")]
 #[global_allocator]
@@ -452,6 +453,13 @@ struct Cli {
         help = t!("core_clap.accept_dns").to_string(),
     )]
     accept_dns: Option<bool>,
+
+    #[arg(
+        long,
+        env = "ET_CUSTOM_DNS",
+        help = t!("core_clap.accept_dns").to_string(),
+    )]
+    custom_dns: Option<String>,
 }
 
 rust_i18n::i18n!("locales", fallback = "en");
@@ -723,7 +731,7 @@ impl TryFrom<&Cli> for TomlConfigLoader {
             cfg.set_port_forwards(old);
         }
 
-        let mut f = cfg.get_flags();
+        let mut f:Flags = cfg.get_flags();
         if let Some(default_protocol) = &cli.default_protocol {
             f.default_protocol = default_protocol.clone()
         };
@@ -770,6 +778,9 @@ impl TryFrom<&Cli> for TomlConfigLoader {
         f.enable_kcp_proxy = cli.enable_kcp_proxy.unwrap_or(f.enable_kcp_proxy);
         f.disable_kcp_input = cli.disable_kcp_input.unwrap_or(f.disable_kcp_input);
         f.accept_dns = cli.accept_dns.unwrap_or(f.accept_dns);
+        if let Some(custom_dns) = &cli.custom_dns {
+            f.default_protocol = custom_dns.clone()
+        };
         cfg.set_flags(f);
 
         if !cli.exit_nodes.is_empty() {
