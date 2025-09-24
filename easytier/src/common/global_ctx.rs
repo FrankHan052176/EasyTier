@@ -132,7 +132,7 @@ impl GlobalCtx {
 
         let stun_info_collector = Arc::new(stun_info_collector);
 
-        let enable_exit_node = config_fs.get_flags().enable_exit_node || cfg!(target_env = "ohos");
+        let enable_exit_node = config_fs.get_flags().enable_exit_node;
         let proxy_forward_by_system = config_fs.get_flags().proxy_forward_by_system;
         let no_tun = config_fs.get_flags().no_tun;
 
