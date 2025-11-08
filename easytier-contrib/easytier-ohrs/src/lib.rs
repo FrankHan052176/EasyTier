@@ -3,11 +3,11 @@ mod native_log;
 use easytier::common::config::{ConfigLoader, TomlConfigLoader};
 use easytier::common::constants::EASYTIER_VERSION;
 use easytier::instance_manager::NetworkInstanceManager;
+use easytier::proto::api::manage::NetworkConfig;
 use napi_derive_ohos::napi;
 use ohos_hilog_binding::{hilog_debug, hilog_error};
 use std::format;
 use uuid::Uuid;
-use easytier::proto::api::manage::NetworkConfig;
 
 static INSTANCE_MANAGER: once_cell::sync::Lazy<NetworkInstanceManager> =
     once_cell::sync::Lazy::new(NetworkInstanceManager::new);
@@ -44,16 +44,17 @@ pub fn set_tun_fd(inst_id: String, fd: i32) -> bool {
 }
 
 #[napi]
-pub fn parse_network_config(cfg_json: String) -> Result<String, String> {
-    let cfg: NetworkConfig = serde_json::from_str(&cfg_json).map_err(|e| e.to_string())?;
-    let toml = cfg.gen_config().map_err(|e| e.to_string())?;
-    Ok(toml.dump())
-}
-
-#[napi]
-pub fn parse_config(cfg_str: String) -> bool {
-    match TomlConfigLoader::new_from_str(&cfg_str) {
-        Ok(_) => true,
+pub fn parse_network_config(cfg_json: String) -> bool {
+    match serde_json::from_str(&cfg_json) {
+        Ok(cfg) => {
+            match cfg.gen_config() {
+                Ok(_) => true,
+                Err(e) => {
+                    hilog_error!("[Rust] parse config failed {}", e);
+                    false
+                }
+            }
+        },
         Err(e) => {
             hilog_error!("[Rust] parse config failed {}", e);
             false
@@ -62,12 +63,20 @@ pub fn parse_config(cfg_str: String) -> bool {
 }
 
 #[napi]
-pub fn run_network_instance(cfg_str: String) -> bool {
-    let cfg = match TomlConfigLoader::new_from_str(&cfg_str) {
-        Ok(cfg) => cfg,
+pub fn run_network_instance(cfg_json: String) -> bool {
+    let cfg = match serde_json::from_str(&cfg_json) {
+        Ok(cfg) => {
+            match cfg.gen_config() {
+                Ok(toml) => toml,
+                Err(e) => {
+                    hilog_error!("[Rust] parse config failed {}", e);
+                    return false
+                }
+            }
+        },
         Err(e) => {
             hilog_error!("[Rust] parse config failed {}", e);
-            return false;
+            return false
         }
     };
 
