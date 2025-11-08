@@ -63,13 +63,11 @@ pub fn parse_network_config(cfg_json: String) -> bool {
 #[napi]
 pub fn run_network_instance(cfg_json: String) -> bool {
     let cfg = match serde_json::from_str::<NetworkConfig>(&cfg_json) {
-        Ok(cfg) => {
-            match cfg.gen_config() {
-                Ok(toml) => toml,
-                Err(e) => {
-                    hilog_error!("[Rust] parse config failed {}", e);
-                    return false;
-                }
+        Ok(cfg) => match cfg.gen_config() {
+            Ok(toml) => toml,
+            Err(e) => {
+                hilog_error!("[Rust] parse config failed {}", e);
+                return false;
             }
         },
         Err(e) => {
