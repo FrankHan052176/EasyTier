@@ -45,14 +45,12 @@ pub fn set_tun_fd(inst_id: String, fd: i32) -> bool {
 
 #[napi]
 pub fn parse_network_config(cfg_json: String) -> bool {
-    match serde_json::from_str(&cfg_json) {
-        Ok(cfg) => {
-            match cfg.gen_config() {
-                Ok(_) => true,
-                Err(e) => {
-                    hilog_error!("[Rust] parse config failed {}", e);
-                    false
-                }
+    match serde_json::from_str::<NetworkConfig>(&cfg_json) {
+        Ok(cfg) => match cfg.gen_config() {
+            Ok(_) => true,
+            Err(e) => {
+                hilog_error!("[Rust] parse config failed {}", e);
+                false
             }
         },
         Err(e) => {
@@ -64,19 +62,19 @@ pub fn parse_network_config(cfg_json: String) -> bool {
 
 #[napi]
 pub fn run_network_instance(cfg_json: String) -> bool {
-    let cfg = match serde_json::from_str(&cfg_json) {
+    let cfg = match serde_json::from_str::<NetworkConfig>(&cfg_json) {
         Ok(cfg) => {
             match cfg.gen_config() {
                 Ok(toml) => toml,
                 Err(e) => {
                     hilog_error!("[Rust] parse config failed {}", e);
-                    return false
+                    return false;
                 }
             }
         },
         Err(e) => {
             hilog_error!("[Rust] parse config failed {}", e);
-            return false
+            return false;
         }
     };
 
