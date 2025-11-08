@@ -48,12 +48,9 @@ pub fn default_network_config() -> String {
     let result = NetworkConfig {
         ..Default::default()
     };
-    match serde_json::to_string(&result) {
-        Ok(str) => { str }
-        Err(e) => {
-            format!("ERROR {}",e)
-        }
-    }
+    serde_json::to_string(&result).unwrap_or_else(|e| {
+        format!("ERROR {}", e)
+    })
 }
 
 #[napi]
