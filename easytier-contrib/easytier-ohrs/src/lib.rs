@@ -44,6 +44,19 @@ pub fn set_tun_fd(inst_id: String, fd: i32) -> bool {
 }
 
 #[napi]
+pub fn default_network_config() -> String {
+    let result = NetworkConfig {
+        ..Default::default()
+    };
+    match serde_json::to_string(&result) {
+        Ok(str) => { str }
+        Err(e) => {
+            format!("ERROR {}",e)
+        }
+    }
+}
+
+#[napi]
 pub fn parse_network_config(cfg_json: String) -> bool {
     match serde_json::from_str::<NetworkConfig>(&cfg_json) {
         Ok(cfg) => match cfg.gen_config() {
