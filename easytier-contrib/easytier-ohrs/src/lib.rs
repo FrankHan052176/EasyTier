@@ -7,6 +7,7 @@ use napi_derive_ohos::napi;
 use ohos_hilog_binding::{hilog_debug, hilog_error};
 use std::format;
 use uuid::Uuid;
+use easytier::proto::api::manage::NetworkConfig;
 
 static INSTANCE_MANAGER: once_cell::sync::Lazy<NetworkInstanceManager> =
     once_cell::sync::Lazy::new(NetworkInstanceManager::new);
@@ -40,6 +41,13 @@ pub fn set_tun_fd(inst_id: String, fd: i32) -> bool {
             false
         }
     }
+}
+
+#[napi]
+pub fn parse_network_config(cfg_json: String) -> Result<String, String> {
+    let cfg: NetworkConfig = serde_json::from_str(&cfg_json).map_err(|e| e.to_string())?;
+    let toml = cfg.gen_config().map_err(|e| e.to_string())?;
+    Ok(toml.dump())
 }
 
 #[napi]
