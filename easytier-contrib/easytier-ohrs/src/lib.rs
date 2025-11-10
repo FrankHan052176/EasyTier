@@ -45,7 +45,7 @@ pub fn set_tun_fd(inst_id: String, fd: i32) -> bool {
 
 #[napi]
 pub fn default_network_config() -> String {
-    let result = NetworkConfig.new_from_config(TomlConfigLoader::default());
+    let result = NetworkConfig::new_from_config(TomlConfigLoader::default());
     serde_json::to_string(&result).unwrap_or_else(|e| format!("ERROR {}", e))
 }
 
