@@ -3,7 +3,7 @@ mod native_log;
 use easytier::common::config::{ConfigLoader, TomlConfigLoader};
 use easytier::common::constants::EASYTIER_VERSION;
 use easytier::instance_manager::NetworkInstanceManager;
-use easytier::proto::api::manage::NetworkConfig;
+use easytier::launcher::NetworkConfig;
 use napi_derive_ohos::napi;
 use ohos_hilog_binding::{hilog_debug, hilog_error};
 use std::format;
@@ -45,9 +45,7 @@ pub fn set_tun_fd(inst_id: String, fd: i32) -> bool {
 
 #[napi]
 pub fn default_network_config() -> String {
-    let result = NetworkConfig {
-        ..Default::default()
-    };
+    let result = NetworkConfig.new_from_config(TomlConfigLoader::default());
     serde_json::to_string(&result).unwrap_or_else(|e| format!("ERROR {}", e))
 }
 
