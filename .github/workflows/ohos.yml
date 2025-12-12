@@ -59,6 +59,17 @@ jobs:
             pkg-config curl libgl1-mesa-dev
           sudo apt-get clean
 
+      - name: Get easytier version
+        run: |
+          EASYTIER_CARGO_VERSION=$(cargo metadata --format-version 1 --no-deps --manifest-path easytier/Cargo.toml \
+            | jq -r '.packages[0].version')
+          EASYTIER_GIT_HASH=$(git -C easytier rev-parse --short HEAD)
+          EASYTIER_VERSION="${EASYTIER_CARGO_VERSION}-${EASYTIER_GIT_HASH}"
+          echo "EASYTIER_VERSION=${EASYTIER_VERSION}" >> $GITHUB_ENV
+          cd ./easytier-contrib/easytier-ohrs/package
+          jq --arg v "$EASYTIER_VERSION" '.version = $v' oh-package.json5 > oh-package.tmp.json5
+          mv oh-package.tmp.json5 oh-package.json5
+
       - name: Setup HarmonyOS CLI tools
         uses: ErBWs/setup-ohos@v1
 
