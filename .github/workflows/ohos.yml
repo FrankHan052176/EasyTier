@@ -126,7 +126,7 @@ jobs:
           sudo apt-get install -y expect
           expect <<EOF
           spawn ohpm publish easytier-ohrs.har
-          after 1000
+          after 10000
           send "frankhan\r"
           expect eof
           EOF
