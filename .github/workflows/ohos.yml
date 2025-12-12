@@ -56,38 +56,22 @@ jobs:
             wget \
             unzip \
             git \
-            pkg-config
+            pkg-config curl libgl1-mesa-dev
           sudo apt-get clean
 
-      - name: Download and extract native SDK
-        working-directory: ../../../
-        run: |
-          echo $PWD
-          wget -q \
-            https://github.com/openharmony-rs/ohos-sdk/releases/download/v5.1.0/ohos-sdk-windows_linux-public.tar.gz.aa
-          wget -q \
-            https://github.com/openharmony-rs/ohos-sdk/releases/download/v5.1.0/ohos-sdk-windows_linux-public.tar.gz.ab
-          cat ohos-sdk-windows_linux-public.tar.gz.aa ohos-sdk-windows_linux-public.tar.gz.ab > sdk.tar.gz
-          echo "Extracting native..."
-          mkdir sdk
-          tar -xzf sdk.tar.gz ohos-sdk/linux/native-linux-x64-5.1.0.107-Release.zip
-          tar -xzf sdk.tar.gz ohos-sdk/linux/toolchains-linux-x64-5.1.0.107-Release.zip
-          unzip -qq ohos-sdk/linux/native-linux-x64-5.1.0.107-Release.zip -d sdk
-          unzip -qq ohos-sdk/linux/toolchains-linux-x64-5.1.0.107-Release.zip -d sdk
-          ls -la sdk/native/llvm/bin/
-          rm -rf ohos-sdk-windows_linux-public.tar.gz.aa ohos-sdk-windows_linux-public.tar.gz.ab ohos-sdk/
+      - name: Upload artifact
+        uses: ErBWs/setup-ohos@v1
 
       - name: Download and Extract Custom SDK
         run: |
           wget https://github.com/FrankHan052176/Easytier-OHOS-sdk/releases/download/v1/ohos-sdk.zip -O /tmp/ohos-sdk.zip
           sudo unzip -o /tmp/ohos-sdk.zip -d /tmp/custom-sdk
-          sudo cp -rf /tmp/custom-sdk/linux/native/* $HOME/sdk/native
-          echo "Custom SDK files deployed to $HOME/sdk/native"
-          ls -a $HOME/sdk/native
+          sudo cp -rf /tmp/custom-sdk/linux/native/* $OHOS_NDK_HOME/native
+          echo "Custom SDK files deployed to $OHOS_NDK_HOME/native"
+          ls -a $OHOS_NDK_HOME/native
 
       - name: Setup build environment
         run: |
-          echo "OHOS_NDK_HOME=$HOME/sdk" >> $GITHUB_ENV
           echo "TARGET_ARCH=aarch64-linux-ohos" >> $GITHUB_ENV
 
       - name: Create clang wrapper script
@@ -117,6 +101,15 @@ jobs:
           ohrs build --release --arch aarch
           ohrs artifact
           mv package.har easytier-ohrs.har
+
+      - name: Init Ohpm
+        working-directory: ./easytier-contrib/easytier-ohrs
+        run: |
+          ohpm config set publish_id ${{ secrets.OHPM_PUBLISH_CODE }}
+          echo "${{ secrets.OHPM_PRIVATE_KEY }}" > private_key
+          chmod 600 private_key
+          ohpm config set key_path ~/private_key
+          ohpm publish easytier-ohrs.har
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
