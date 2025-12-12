@@ -124,12 +124,16 @@ jobs:
           ohpm config set key_path "$KEY_FILE"
           sudo apt-get update
           sudo apt-get install -y expect
-          expect << 'EOF'
-          set timeout 60
+          expect <<EOF
+          set timeout 120
           spawn ohpm publish easytier-ohrs.har
-          expect -re ".*private key.*:"
-          send "frankhan\r"
-          expect eof
+          expect {
+            "what is your passphrase of the private key:" {
+              send "${{ secrets.OHPM_PRIVATE_KEY_PASSWORD }}\r"
+              exp_continue
+            }
+            eof
+          }
           EOF
           rm -rf "$TMP_DIR"
 
