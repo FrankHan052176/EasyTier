@@ -56,7 +56,7 @@ jobs:
             wget \
             unzip \
             git \
-            pkg-config curl libgl1-mesa-dev
+            pkg-config curl libgl1-mesa-dev expect
           sudo apt-get clean
 
       - name: Get easytier version
@@ -117,20 +117,21 @@ jobs:
         working-directory: ./easytier-contrib/easytier-ohrs
         run: |
           ohpm config set publish_id ${{ secrets.OHPM_PUBLISH_CODE }}
-          # Prepare encrypted key
           TMP_DIR=$(mktemp -d)
-          ENCRYPTED_KEY_FILE="$TMP_DIR/encrypted_key.pem"
-          DECRYPTED_KEY_FILE="$TMP_DIR/decrypted_key.pem"
-          PASS_FILE="$TMP_DIR/pass.txt"
-          echo "${{ secrets.OHPM_PRIVATE_KEY }}" > "$ENCRYPTED_KEY_FILE"
-          echo "${{ secrets.OHPM_PRIVATE_KEY_PASSWORD }}" > "$PASS_FILE"
-          openssl rsa \
-            -in "$ENCRYPTED_KEY_FILE" \
-            -passin file:"$PASS_FILE" \
-            -out "$DECRYPTED_KEY_FILE"
-          chmod 600 "$DECRYPTED_KEY_FILE"
-          ohpm config set key_path "$DECRYPTED_KEY_FILE"
-          ohpm publish easytier-ohrs.har
+          KEY_FILE="$TMP_DIR/key.pem"
+          echo "${{ secrets.OHPM_PRIVATE_KEY }}" > "$KEY_FILE"
+          chmod 600 "$KEY_FILE"
+          ohpm config set key_path "$KEY_FILE"
+          expect << 'EOF'
+          set timeout 120
+          spawn ohpm publish easytier-ohrs.har
+          expect {
+              -re ".*:" {
+                  send "${{ secrets.OHPM_PRIVATE_KEY_PASSWORD }}\r"
+              }
+          }
+          expect eof
+          EOF
           rm -rf "$TMP_DIR"
 
       - name: Upload artifact
