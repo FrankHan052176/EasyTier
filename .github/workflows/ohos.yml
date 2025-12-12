@@ -125,15 +125,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y expect
           expect <<EOF
-          set timeout 120
           spawn ohpm publish easytier-ohrs.har
-          expect {
-            "what is your passphrase of the private key:" {
-              send "frankhan\r"
-              exp_continue
-            }
-            eof
-          }
+          after 1000
+          send "frankhan\r"
+          expect eof
           EOF
           rm -rf "$TMP_DIR"
 
