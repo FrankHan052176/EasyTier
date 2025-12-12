@@ -106,10 +106,13 @@ jobs:
         working-directory: ./easytier-contrib/easytier-ohrs
         run: |
           ohpm config set publish_id ${{ secrets.OHPM_PUBLISH_CODE }}
-          echo "${{ secrets.OHPM_PRIVATE_KEY }}" > ~/.ssh_ohpm/private_key
-          chmod 777 ~/.ssh_ohpm/private_key
-          ohpm config set key_path ~/.ssh_ohpm/private_key
+          TMP_DIR=$(mktemp -d)
+          PRIVATE_KEY_FILE="$TMP_DIR/private_key"
+          echo "${{ secrets.OHPM_PRIVATE_KEY }}" > "$PRIVATE_KEY_FILE"
+          chmod 600 "$PRIVATE_KEY_FILE"
+          ohpm config set key_path "$PRIVATE_KEY_FILE"
           ohpm publish easytier-ohrs.har
+          rm -rf "$TMP_DIR"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
