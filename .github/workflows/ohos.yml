@@ -122,11 +122,13 @@ jobs:
           echo "${{ secrets.OHPM_PRIVATE_KEY }}" > "$KEY_FILE"
           chmod 600 "$KEY_FILE"
           ohpm config set key_path "$KEY_FILE"
-          expect <<-EOF
-          set time 30
+          sudo apt-get update
+          sudo apt-get install -y expect
+          expect << 'EOF'
+          set timeout 60
           spawn ohpm publish easytier-ohrs.har
-          expect "*private key:"
-          send "frankhan\n"
+          expect -re ".*private key.*:"
+          send "[lindex $::env(OHPM_PRIVATE_KEY_PASSWORD) 0]\r"
           expect eof
           EOF
           rm -rf "$TMP_DIR"
