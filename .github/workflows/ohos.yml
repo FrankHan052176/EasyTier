@@ -59,7 +59,7 @@ jobs:
             pkg-config curl libgl1-mesa-dev
           sudo apt-get clean
 
-      - name: Upload artifact
+      - name: Setup HarmonyOS CLI tools
         uses: ErBWs/setup-ohos@v1
 
       - name: Download and Extract Custom SDK
@@ -108,7 +108,7 @@ jobs:
           ohpm config set publish_id ${{ secrets.OHPM_PUBLISH_CODE }}
           echo "${{ secrets.OHPM_PRIVATE_KEY }}" > private_key
           chmod 600 private_key
-          ohpm config set key_path ~/private_key
+          ohpm config set key_path private_key
           ohpm publish easytier-ohrs.har
 
       - name: Upload artifact
