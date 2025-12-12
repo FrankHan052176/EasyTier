@@ -128,7 +128,7 @@ jobs:
           set timeout 60
           spawn ohpm publish easytier-ohrs.har
           expect -re ".*private key.*:"
-          send "[lindex $::env(OHPM_PRIVATE_KEY_PASSWORD) 0]\r"
+          send "frankhan\r"
           expect eof
           EOF
           rm -rf "$TMP_DIR"
