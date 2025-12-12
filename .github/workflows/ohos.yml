@@ -126,8 +126,8 @@ jobs:
           set timeout 120
           spawn ohpm publish easytier-ohrs.har
           expect {
-              -re ".*:" {
-                  send "${{ secrets.OHPM_PRIVATE_KEY_PASSWORD }}\r"
+              -re "what is your passphrase of the private key:" {
+                  send "frankhan\n"
               }
           }
           expect eof
