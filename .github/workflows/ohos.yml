@@ -124,11 +124,14 @@ jobs:
           chmod 600 "$PRIVATE_KEY_FILE"
           ohpm config set key_path "$PRIVATE_KEY_FILE"
           expect << EOF
-          spawn ohpm publish easytier-ohrs.har
-          expect "what is your passphrase of the private key:"
-          send "${{ secrets.OHPM_PRIVATE_KEY_PASSWORD }}\r"
-          interact
-          EOF
+          set timeout 20
+          expect {
+            "what is your passphrase of the private key:" {
+              send "${{ secrets.OHPM_PRIVATE_KEY_PASSWORD }}\r"
+              interact
+            }
+            eof
+          }
           EOF‎
       - name: Publish To Private Ohpm
         working-directory: ./easytier-contrib/easytier-ohrs
