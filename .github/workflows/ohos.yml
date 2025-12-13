@@ -127,7 +127,7 @@ jobs:
           spawn ohpm publish easytier-ohrs.har
           expect "what is your passphrase of the private key:"
           send "${{ secrets.OHPM_PRIVATE_KEY_PASSWORD }}\r"
-          interact
+          expect eof
           EOF‎
 
       - name: Publish To Private Ohpm
