@@ -118,12 +118,13 @@ jobs:
         run: |
           ohpm config set publish_id ${{ secrets.OHPM_PUBLISH_CODE }}
           ohpm config set publish_registry https://ohpm.openharmony.cn/ohpm
-          ohpm config set key_passphrase security:${{ secrets.OHPM_PRIVATE_KEY_PASSWORD }}
           TMP_DIR=$(mktemp -d)
           PRIVATE_KEY_FILE="$TMP_DIR/private_key"
           echo "${{ secrets.OHPM_PRIVATE_KEY }}" > "$PRIVATE_KEY_FILE"
           chmod 600 "$PRIVATE_KEY_FILE"
           ohpm config set key_path "$PRIVATE_KEY_FILE"
+          ohpm config set key_passphrase ${{ secrets.OHPM_PRIVATE_KEY_PASSWORD }}
+          ohpm config set crypto_path "$GITHUB_WORKSPACE/‎easytier-contrib/easytier-ohrs/ohpm_crypto"‎
           ohpm publish easytier-ohrs.har
 
       - name: Publish To Private Ohpm
