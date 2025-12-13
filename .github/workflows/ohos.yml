@@ -123,11 +123,10 @@ jobs:
           echo "${{ secrets.OHPM_PRIVATE_KEY }}" > "$PRIVATE_KEY_FILE"
           chmod 600 "$PRIVATE_KEY_FILE"
           ohpm config set key_path "$PRIVATE_KEY_FILE"
-          expect << 'EOF'
+          expect <<'EOF'
           spawn ohpm publish easytier-ohrs.har
           expect "what is your passphrase of the private key:"
-          send "${{ secrets.OHPM_PRIVATE_KEY_PASSWORD }}"
-          send "\r"
+          send "${{ secrets.OHPM_PRIVATE_KEY_PASSWORD }}\r"
           interact
           EOF‎
 
