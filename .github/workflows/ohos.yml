@@ -113,25 +113,14 @@ jobs:
           ohrs artifact
           mv package.har easytier-ohrs.har
 
-      - name: Init Ohpm
+      - name: Publish To Private Ohpm
         working-directory: ./easytier-contrib/easytier-ohrs
-        env:
-          OHPM_PRIVATE_KEY_PASSWORD: ${{ secrets.OHPM_PRIVATE_KEY_PASSWORD }}
         run: |
-          ohpm config set publish_id ${{ secrets.OHPM_PUBLISH_CODE }}
-          TMP_DIR=$(mktemp -d)
-          KEY_FILE="$TMP_DIR/key.pem"
-          echo "${{ secrets.OHPM_PRIVATE_KEY }}" > "$KEY_FILE"
-          chmod 600 "$KEY_FILE"
-          ohpm config set key_path "$KEY_FILE"
-          expect << 'EOF'
-          set timeout 20
-          spawn ohpm publish easytier-ohrs.har
-          sleep 10
-          send "$::env(OHPM_PRIVATE_KEY_PASSWORD)\r"
-          expect eof
-          EOF
-          rm -rf "$TMP_DIR"
+          ohpm config set strict_ssl false
+          ohpm config set //${{ secrets.OHPM_PRIVATE_URL }}/:_auth ****
+          ohpm config set registry https://${{ secrets.OHPM_PRIVATE_URL }}
+          ohpm config set publish_registry https://${{ secrets.OHPM_PRIVATE_URL }}
+          ohpm publish easytier-ohrs.har
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
