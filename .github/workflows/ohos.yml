@@ -123,13 +123,18 @@ jobs:
           echo "${{ secrets.OHPM_PRIVATE_KEY }}" > "$PRIVATE_KEY_FILE"
           chmod 600 "$PRIVATE_KEY_FILE"
           ohpm config set key_path "$PRIVATE_KEY_FILE"
-          ohpm config set key_passphrase ${{ secrets.OHPM_PRIVATE_KEY_PASSWORD }}
-          ohpm config set crypto_path "$GITHUB_WORKSPACE/‎easytier-contrib/easytier-ohrs/ohpm_crypto"‎
-          ohpm publish easytier-ohrs.har
+          expect << 'EOF'
+          spawn ohpm publish easytier-ohrs.har
+          expect "what is your passphrase of the private key:"
+          send "${{ secrets.OHPM_PRIVATE_KEY_PASSWORD }}"
+          send "\r"
+          interact
+          EOF‎
 
       - name: Publish To Private Ohpm
         working-directory: ./easytier-contrib/easytier-ohrs
         run: |
+          rm -rf ~/.ohpm/.ohpmrc
           ohpm config set strict_ssl false
           printf '%s' "${{ secrets.CODEARTS_PRIVATE_OHPM }}" > ~/.ohpm/.ohpmrc
           ohpm publish easytier-ohrs.har
