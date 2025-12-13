@@ -70,6 +70,16 @@ jobs:
           jq --arg v "$EASYTIER_VERSION" '.version = $v' oh-package.json5 > oh-package.tmp.json5
           mv oh-package.tmp.json5 oh-package.json5
 
+      - name: Generate CHANGELOG.md for current commit
+        working-directory: ./easytier-contrib/easytier-ohrs/package
+        run: |
+          {
+            echo "## easytier-ohrs ${EASYTIER_VERSION}"
+            echo
+            git log -1 --pretty=format:"- %s"
+            echo
+          } > CHANGELOG.md
+
       - name: Setup HarmonyOS CLI tools
         uses: ErBWs/setup-ohos@v1
 
