@@ -150,6 +150,7 @@ jobs:
           printf '%s' "${{ secrets.CODEARTS_PRIVATE_OHPM }}" > ~/.ohpm/.ohpmrc
           ohpm config set strict_ssl false
           ohpm publish easytier-ohrs.har
+          curl --header "Content-Type: application/json" --request POST --data "{}" ${{ secrets.CODEARTS_WEBHOOKS }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
