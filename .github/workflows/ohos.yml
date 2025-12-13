@@ -117,9 +117,7 @@ jobs:
         working-directory: ./easytier-contrib/easytier-ohrs
         run: |
           ohpm config set strict_ssl false
-          ohpm config set //${{ secrets.OHPM_PRIVATE_URL }}/:_auth ****
-          ohpm config set registry https://${{ secrets.OHPM_PRIVATE_URL }}
-          ohpm config set publish_registry https://${{ secrets.OHPM_PRIVATE_URL }}
+          printf '%s' "${{ secrets.CODEARTS_PRIVATE_OHPM }}" > ~/.ohpm/.ohpmrc
           ohpm publish easytier-ohrs.har
 
       - name: Upload artifact
