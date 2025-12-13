@@ -139,20 +139,16 @@ jobs:
           ohpm config set key_path $PRIVATE_KEY_FILE
           unzip ohpm_crypto.zip -d /home/runner/work/
           ohpm config set crypto_path /home/runner/work/ohpm_crypto
-          ls -l /home/runner/work/ohpm_crypto
           chmod 755 /home/runner/work/ohpm_crypto/*
           PASSPHRASE="$(printf '%s' "$OHPM_KEY_PASSPHRASE" | tr -d '\r\n')"
           ohpm config set key_passphrase "$PASSPHRASE"
-          cat ~/.ohpm/.ohpmrc
           ohpm publish easytier-ohrs.har
           
       - name: Publish To Private Ohpm
         working-directory: ./easytier-contrib/easytier-ohrs
         run: |
-          rm -rf ~/.ohpm/.ohpmrc
-          ohpm config set strict_ssl false
-          cat ~/.ohpm/.ohpmrc
           printf '%s' "${{ secrets.CODEARTS_PRIVATE_OHPM }}" > ~/.ohpm/.ohpmrc
+          ohpm config set strict_ssl false
           ohpm publish easytier-ohrs.har
 
       - name: Upload artifact
