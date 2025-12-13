@@ -115,6 +115,8 @@ jobs:
 
       - name: Init Ohpm
         working-directory: ./easytier-contrib/easytier-ohrs
+        env:
+          OHPM_PRIVATE_KEY_PASSWORD: ${{ secrets.OHPM_PRIVATE_KEY_PASSWORD }}
         run: |
           ohpm config set publish_id ${{ secrets.OHPM_PUBLISH_CODE }}
           TMP_DIR=$(mktemp -d)
@@ -122,12 +124,11 @@ jobs:
           echo "${{ secrets.OHPM_PRIVATE_KEY }}" > "$KEY_FILE"
           chmod 600 "$KEY_FILE"
           ohpm config set key_path "$KEY_FILE"
-          sudo apt-get update
-          sudo apt-get install -y expect
-          expect <<EOF
+          expect << 'EOF'
+          set timeout 20
           spawn ohpm publish easytier-ohrs.har
-          after 10000
-          send "frankhan\r"
+          sleep 10
+          send "$::env(OHPM_PRIVATE_KEY_PASSWORD)\r"
           expect eof
           EOF
           rm -rf "$TMP_DIR"
