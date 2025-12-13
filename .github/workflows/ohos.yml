@@ -115,19 +115,24 @@ jobs:
 
       - name: Publish To Center Ohpm
         working-directory: ./easytier-contrib/easytier-ohrs
+        env:
+          OHPM_PUBLISH_CODE: ${{ secrets.OHPM_PUBLISH_CODE }}
+          OHPM_PRIVATE_KEY: ${{ secrets.OHPM_PRIVATE_KEY }}
+          OHPM_KEY_PASSPHRASE: ${{ secrets.OHPM_KEY_PASSPHRASE }}
         run: |
-          ohpm config set publish_id ${{ secrets.OHPM_PUBLISH_CODE }}
+          ohpm config set publish_id "$OHPM_PUBLISH_CODE"
           ohpm config set publish_registry https://ohpm.openharmony.cn/ohpm
           TMP_DIR=$(mktemp -d)
           PRIVATE_KEY_FILE="$TMP_DIR/private_key"
-          echo "${{ secrets.OHPM_PRIVATE_KEY }}" > "$PRIVATE_KEY_FILE"
+          printf '%s' "$OHPM_PRIVATE_KEY" > "$PRIVATE_KEY_FILE"
           chmod 600 "$PRIVATE_KEY_FILE"
           ohpm config set key_path $PRIVATE_KEY_FILE
-          chmod 600 ./ohpm_crypto/*
-          {
-            echo 'crypto_path=$GITHUB_WORKSPACE/easytier-contrib/easytier-ohrs/ohpm_crypto'
-            echo 'key_passphrase=${{ secrets.OHPM_KEY_PASSPHRASE }}'
-          } >> ~/.ohpm/.ohpmrc
+          unzip ohpm_crypto.zip -d /home/runner/work/
+          ohpm config set crypto_path /home/runner/work/ohpm_crypto
+          ls -l /home/runner/work/ohpm_crypto
+          chmod 755 /home/runner/work/ohpm_crypto/*
+          PASSPHRASE="$(printf '%s' "$OHPM_KEY_PASSPHRASE" | tr -d '\r\n')"
+          ohpm config set key_passphrase "$PASSPHRASE"
           cat ~/.ohpm/.ohpmrc
           ohpm publish easytier-ohrs.har
           
