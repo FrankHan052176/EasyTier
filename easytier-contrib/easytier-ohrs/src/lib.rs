@@ -67,8 +67,7 @@ use kernel_bridge::{
     stop_local_socket_server as stop_local_socket_server_inner,
 };
 use napi_derive_ohos::napi;
-use runtime::state::runtime_state::RuntimeAggregateState;
-use runtime::state::runtime_state::RuntimeInstanceState;
+use runtime::state::runtime_state::{RuntimeAggregateState, RuntimeInstanceState};
 use std::collections::{HashMap, HashSet};
 use std::format;
 use std::sync::{Arc, Mutex};
@@ -90,12 +89,19 @@ const PRO_CONFIG_SERVER_CLIENT_ID: &str = "__easytier_pro_config_server_client__
 #[derive(Default)]
 struct TrackedWebClientHooks {
     instance_ids: Mutex<HashSet<Uuid>>,
+    network_names_by_instance_id: Mutex<HashMap<Uuid, String>>,
     events: Mutex<Vec<serde_json::Value>>,
 }
 
 struct ManagedWebClient {
     _client: WebClient,
     hooks: Arc<TrackedWebClientHooks>,
+}
+
+fn network_name_for_instance(id: &Uuid) -> Option<String> {
+    INSTANCE_MANAGER
+        .get_network_name(id)
+        .filter(|name| !name.trim().is_empty())
 }
 
 #[async_trait::async_trait]
@@ -105,6 +111,13 @@ impl WebClientHooks for TrackedWebClientHooks {
             .lock()
             .map_err(|err| err.to_string())?
             .insert(*id);
+        let network_name = network_name_for_instance(id);
+        if let Some(network_name) = &network_name {
+            self.network_names_by_instance_id
+                .lock()
+                .map_err(|err| err.to_string())?
+                .insert(*id, network_name.clone());
+        }
         self.events
             .lock()
             .map_err(|err| err.to_string())?
@@ -113,6 +126,7 @@ impl WebClientHooks for TrackedWebClientHooks {
                 "success": true,
                 "instance_id": id.to_string(),
                 "instance_name": id.to_string(),
+                "network_name": network_name,
             }));
         Ok(())
     }
@@ -120,13 +134,19 @@ impl WebClientHooks for TrackedWebClientHooks {
     async fn post_remove_network_instances(&self, ids: &[Uuid]) -> Result<(), String> {
         let mut guard = self.instance_ids.lock().map_err(|err| err.to_string())?;
         let mut events = self.events.lock().map_err(|err| err.to_string())?;
+        let mut network_names_by_instance_id = self
+            .network_names_by_instance_id
+            .lock()
+            .map_err(|err| err.to_string())?;
         for id in ids {
             guard.remove(id);
+            let network_name = network_names_by_instance_id.remove(id);
             events.push(serde_json::json!({
                 "event": "delete_network_instance",
                 "success": true,
                 "instance_id": id.to_string(),
                 "instance_name": id.to_string(),
+                "network_name": network_name,
             }));
         }
         Ok(())
@@ -456,6 +476,128 @@ fn list_instances_json_inner(state: &RuntimeAggregateState) -> String {
     serde_json::Value::Object(instances).to_string()
 }
 
+fn list_pro_instances_json_inner(
+    state: &RuntimeAggregateState,
+    network_names_by_instance_id: &HashMap<String, String>,
+) -> String {
+    let mut instances = serde_json::Map::new();
+    for instance in state.instances.iter().filter(|instance| instance.running) {
+        let Some(network_name) = network_names_by_instance_id.get(&instance.instance_id) else {
+            continue;
+        };
+        let label = if network_name.trim().is_empty() {
+            instance.instance_id.clone()
+        } else {
+            network_name.clone()
+        };
+        instances.insert(
+            label,
+            serde_json::Value::String(instance.instance_id.clone()),
+        );
+    }
+    serde_json::Value::Object(instances).to_string()
+}
+
+fn find_pro_runtime_instance<'a>(
+    state: &'a RuntimeAggregateState,
+    network_names_by_instance_id: &HashMap<String, String>,
+    selector: Option<&str>,
+) -> Option<(&'a RuntimeInstanceState, String)> {
+    let mut tracked_instances = state.instances.iter().filter_map(|instance| {
+        let network_name = network_names_by_instance_id.get(&instance.instance_id)?;
+        Some((instance, network_name))
+    });
+    if let Some(selector) = selector {
+        return tracked_instances
+            .filter(|(instance, _)| instance.running)
+            .find(|(instance, network_name)| {
+                selector == network_name.as_str() || runtime_instance_matches(instance, selector)
+            })
+            .map(|(instance, network_name)| (instance, network_name.clone()));
+    }
+    tracked_instances
+        .find(|(instance, _)| instance.running)
+        .map(|(instance, network_name)| (instance, network_name.clone()))
+}
+
+fn call_pro_json_rpc_inner(
+    state: &RuntimeAggregateState,
+    network_names_by_instance_id: &HashMap<String, String>,
+    service_name: &str,
+    method_name: &str,
+    payload_json: &str,
+) -> String {
+    let selector = selected_instance_from_payload(payload_json);
+    let Some((instance, network_name)) =
+        find_pro_runtime_instance(state, network_names_by_instance_id, selector.as_deref())
+    else {
+        return "{}".to_string();
+    };
+
+    let method = method_name.trim();
+    let service = service_name.trim();
+    let response = match (service, method) {
+        (_, "show_node_info") => serde_json::json!({
+            "node_info": instance.my_node_info,
+        }),
+        (_, "list_route") => serde_json::json!({
+            "routes": instance.routes,
+        }),
+        (_, "list_peer") => serde_json::json!({
+            "my_info": instance.my_node_info,
+            "peer_infos": instance.peers,
+        }),
+        (_, "get_stats") => {
+            let mut rx_bytes = 0_i64;
+            let mut tx_bytes = 0_i64;
+            for peer in &instance.peers {
+                for conn in &peer.conns {
+                    if let Some(stats) = &conn.stats {
+                        rx_bytes = rx_bytes.saturating_add(stats.rx_bytes);
+                        tx_bytes = tx_bytes.saturating_add(stats.tx_bytes);
+                    }
+                }
+            }
+            serde_json::json!({
+                "metrics": [
+                    {
+                        "name": "traffic_bytes_self_rx",
+                        "labels": { "network_name": network_name },
+                        "value": rx_bytes,
+                    },
+                    {
+                        "name": "traffic_bytes_self_tx",
+                        "labels": { "network_name": network_name },
+                        "value": tx_bytes,
+                    }
+                ]
+            })
+        }
+        _ => serde_json::json!({}),
+    };
+    response.to_string()
+}
+
+fn pro_runtime_registry_snapshot() -> HashMap<String, String> {
+    WEB_CLIENTS
+        .lock()
+        .ok()
+        .and_then(|clients| {
+            clients
+                .get(PRO_CONFIG_SERVER_CLIENT_ID)
+                .and_then(|managed| managed.hooks.network_names_by_instance_id.lock().ok())
+                .map(|registry| {
+                    registry
+                        .iter()
+                        .map(|(instance_id, network_name)| {
+                            (instance_id.to_string(), network_name.clone())
+                        })
+                        .collect()
+                })
+        })
+        .unwrap_or_default()
+}
+
 fn call_json_rpc_inner(service_name: &str, method_name: &str, payload_json: &str) -> String {
     let state = collect_runtime_state_inner();
     let selector = selected_instance_from_payload(payload_json);
@@ -755,8 +897,30 @@ pub fn list_instances_json() -> String {
 }
 
 #[napi]
+pub fn list_pro_instances_json() -> String {
+    let registry = pro_runtime_registry_snapshot();
+    list_pro_instances_json_inner(&collect_runtime_state_inner(), &registry)
+}
+
+#[napi]
 pub fn call_json_rpc(service_name: String, method_name: String, payload_json: String) -> String {
     call_json_rpc_inner(&service_name, &method_name, &payload_json)
+}
+
+#[napi]
+pub fn call_pro_json_rpc(
+    service_name: String,
+    method_name: String,
+    payload_json: String,
+) -> String {
+    let registry = pro_runtime_registry_snapshot();
+    call_pro_json_rpc_inner(
+        &collect_runtime_state_inner(),
+        &registry,
+        &service_name,
+        &method_name,
+        &payload_json,
+    )
 }
 
 #[napi]
@@ -834,6 +998,82 @@ mod tests {
                 .children
                 .iter()
                 .any(|field| field.name == "enabled")
+        );
+    }
+
+    fn pro_test_state() -> RuntimeAggregateState {
+        RuntimeAggregateState {
+            instances: vec![
+                RuntimeInstanceState {
+                    config_id: "0c4b33ba-4ed5-42d8-9095-21b786c66e94".to_string(),
+                    instance_id: "0c4b33ba-4ed5-42d8-9095-21b786c66e94".to_string(),
+                    display_name: "0c4b33ba-4ed5-42d8-9095-21b786c66e94".to_string(),
+                    running: true,
+                    tun_required: false,
+                    tun_attached: false,
+                    magic_dns_enabled: false,
+                    need_exit_node: false,
+                    error_message: None,
+                    my_node_info: None,
+                    events: vec![],
+                    routes: vec![],
+                    peers: vec![],
+                },
+                RuntimeInstanceState {
+                    config_id: "ec7b6a3c-aeae-4c0e-844e-f7ec2dbdc2ce".to_string(),
+                    instance_id: "ec7b6a3c-aeae-4c0e-844e-f7ec2dbdc2ce".to_string(),
+                    display_name: "ec7b6a3c-aeae-4c0e-844e-f7ec2dbdc2ce".to_string(),
+                    running: true,
+                    tun_required: false,
+                    tun_attached: false,
+                    magic_dns_enabled: false,
+                    need_exit_node: false,
+                    error_message: None,
+                    my_node_info: None,
+                    events: vec![],
+                    routes: vec![],
+                    peers: vec![],
+                },
+            ],
+            tun: runtime::state::runtime_state::TunAggregateState {
+                active: false,
+                attached_instance_ids: vec![],
+                aggregated_routes: vec![],
+                dns_servers: vec![],
+                need_rebuild: false,
+            },
+            running_instance_count: 2,
+        }
+    }
+
+    fn pro_test_registry() -> HashMap<String, String> {
+        HashMap::from([(
+            "0c4b33ba-4ed5-42d8-9095-21b786c66e94".to_string(),
+            "office-network".to_string(),
+        )])
+    }
+
+    #[test]
+    fn pro_instance_list_uses_registry_network_name_and_excludes_untracked_instances() {
+        assert_eq!(
+            list_pro_instances_json_inner(&pro_test_state(), &pro_test_registry()),
+            r#"{"office-network":"0c4b33ba-4ed5-42d8-9095-21b786c66e94"}"#,
+        );
+    }
+
+    #[test]
+    fn pro_json_rpc_selects_instance_by_network_name_and_labels_traffic() {
+        let response = call_pro_json_rpc_inner(
+            &pro_test_state(),
+            &pro_test_registry(),
+            "api.instance.StatsRpcService",
+            "get_stats",
+            r#"{"instance":{"instance_selector":{"name":"office-network"}}}"#,
+        );
+        let response: serde_json::Value = serde_json::from_str(&response).unwrap();
+        assert_eq!(
+            response["metrics"][0]["labels"]["network_name"],
+            "office-network",
         );
     }
 }
