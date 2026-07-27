@@ -105,7 +105,8 @@ struct ManagedWebClient {
 
 fn network_name_for_instance(id: &Uuid) -> Option<String> {
     INSTANCE_MANAGER
-        .get_network_name(id)
+        .config(*id)
+        .map(|config| config.get_network_identity().network_name)
         .filter(|name| !name.trim().is_empty())
 }
 
@@ -367,10 +368,10 @@ fn drain_config_server_events_inner() -> Vec<serde_json::Value> {
 
 fn stop_runtime_inner() -> bool {
     let mut ok = stop_web_client(PRO_CONFIG_SERVER_CLIENT_ID);
-    let ids = INSTANCE_MANAGER.list_network_instance_ids();
+    let ids = INSTANCE_MANAGER.instance_ids();
     if !ids.is_empty() {
-        ok = INSTANCE_MANAGER
-            .delete_network_instance(ids)
+        ok = ASYNC_RUNTIME
+            .block_on(INSTANCE_MANAGER.delete_network_instances(ids))
             .map(|_| true)
             .unwrap_or_else(|err| {
                 ohrs_log_error!("[Rust] stop runtime instances failed {}", err);
