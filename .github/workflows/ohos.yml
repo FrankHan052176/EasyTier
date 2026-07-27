@@ -171,18 +171,22 @@ jobs:
             DIFF_COUNT=$(git rev-list --count "${LAST_TAG}..HEAD")
           fi
 
-          # CodeHub sorts private OHPM versions lexicographically. Keep every
-          # field fixed-width and put the UTC timestamp first in the suffix.
-          # The three-part base version keeps its required dots; generated
-          # fields use hyphens only.
+          # CodeHub sorts private OHPM versions lexicographically rather than
+          # comparing the three SemVer components numerically. Keep the OHPM
+          # stream prefix fixed so a future Core 2.10.x cannot sort below 2.9.x.
+          # The actual Core version stays visible in the generated suffix.
+          OHPM_STREAM_VERSION="2.6.4"
           SORTABLE_TIME=$(date -u +%Y%m%d%H%M%S)
           DIFF_COUNT_PADDED=$(printf '%010d' "$DIFF_COUNT")
           RUN_NUMBER_PADDED=$(printf '%010d' "$GITHUB_RUN_NUMBER")
           RUN_ATTEMPT_PADDED=$(printf '%03d' "$GITHUB_RUN_ATTEMPT")
+          CORE_VERSION_ID=$(printf '%s' "$BASE_VERSION" | tr '.+' '--')
           COMMIT_HASH=$(git rev-parse --short=8 HEAD)
-          EASYTIER_VERSION="${BASE_VERSION}-${SORTABLE_TIME}-${DIFF_COUNT_PADDED}-${RUN_NUMBER_PADDED}-${RUN_ATTEMPT_PADDED}-g${COMMIT_HASH}"
+          EASYTIER_VERSION="${OHPM_STREAM_VERSION}-${SORTABLE_TIME}-${DIFF_COUNT_PADDED}-${RUN_NUMBER_PADDED}-${RUN_ATTEMPT_PADDED}-core-${CORE_VERSION_ID}-g${COMMIT_HASH}"
 
+          echo "EASYTIER_CORE_VERSION=$BASE_VERSION"
           echo "EASYTIER_VERSION=$EASYTIER_VERSION"
+          echo "EASYTIER_CORE_VERSION=$BASE_VERSION" >> "$GITHUB_ENV"
           echo "EASYTIER_VERSION=$EASYTIER_VERSION" >> "$GITHUB_ENV"
 
           cd ./easytier-contrib/easytier-ohrs/package
@@ -196,6 +200,8 @@ jobs:
           {
             echo "## easytier-ohrs ${EASYTIER_VERSION}"
             echo
+            echo "- Core version: ${EASYTIER_CORE_VERSION}"
+            echo "- Core commit: ${GITHUB_SHA}"
             git log -1 --pretty=format:"- %s"
             echo
           } > CHANGELOG.md
