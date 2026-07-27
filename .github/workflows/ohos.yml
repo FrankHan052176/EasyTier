@@ -2,7 +2,7 @@ name: EasyTier OHOS
 
 on:
   push:
-    branches: ["develop", "main", "releases/**"]
+    branches: ["develop", "main", "releases/**", "ohos/**"]
     tags:
       - 'v*'
       - '!*-pre'
@@ -52,8 +52,65 @@ jobs:
     # Map a step output to a job output
     outputs:
       # do not skip push on branch starts with releases/
-      should_skip: ${{ steps.skip_check.outputs.should_skip == 'true' && !startsWith(github.ref_name, 'releases/') }}
+      should_skip: ${{ steps.event_policy.outputs.force_build != 'true' && (steps.event_policy.outputs.should_skip == 'true' || steps.skip_check.outputs.should_skip == 'true') && !startsWith(github.ref_name, 'releases/') }}
     steps:
+      - name: Resolve OHOS event policy
+        id: event_policy
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_REF: ${{ github.ref }}
+          HEAD_REF: ${{ github.head_ref }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          set -euo pipefail
+
+          echo "force_build=false" >> "$GITHUB_OUTPUT"
+          echo "should_skip=false" >> "$GITHUB_OUTPUT"
+
+          # An upstream ohos/* push has access to repository secrets and is the
+          # canonical HAR build. Do not let duplicate detection suppress it.
+          if [[ "$EVENT_NAME" == "push" && "$EVENT_REF" == refs/heads/ohos/* ]]; then
+            echo "force_build=true" >> "$GITHUB_OUTPUT"
+            echo "reason=upstream ohos branch push" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # The same commit was already built by the ohos/* push event. Keep
+          # PR formatting checks, but do not build the HAR a second time.
+          if [[ "$EVENT_NAME" == "pull_request" && \
+                "$HEAD_REPOSITORY" == "$GITHUB_REPOSITORY" && \
+                "$HEAD_REF" == ohos/* ]]; then
+            echo "should_skip=true" >> "$GITHUB_OUTPUT"
+            echo "reason=same-repository ohos PR" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # GitHub uses squash merges in this repository. If main points to a
+          # merged same-repository ohos/* PR, its source tree has already gone
+          # through the canonical branch-push build above.
+          if [[ "$EVENT_NAME" == "push" && "$EVENT_REF" == "refs/heads/main" ]]; then
+            API_URL="$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls"
+            RESPONSE_FILE="$(mktemp)"
+            if curl --fail --silent --show-error \
+              --header "Accept: application/vnd.github+json" \
+              --header "Authorization: Bearer $GH_TOKEN" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              "$API_URL" > "$RESPONSE_FILE"; then
+              if jq -e --arg repository "$GITHUB_REPOSITORY" \
+                'any(.[];
+                  .merged_at != null and
+                  .head.repo.full_name == $repository and
+                  (.head.ref | startswith("ohos/")))' \
+                "$RESPONSE_FILE" >/dev/null; then
+                echo "should_skip=true" >> "$GITHUB_OUTPUT"
+                echo "reason=merged same-repository ohos PR" >> "$GITHUB_OUTPUT"
+              fi
+            else
+              echo "::notice::Unable to inspect associated PR; falling back to a full HAR build."
+            fi
+          fi
+
       - id: skip_check
         uses: fkirc/skip-duplicate-actions@v5
         with:
@@ -68,9 +125,12 @@ jobs:
     needs: pre_job
     env:
       OHPM_PUBLISH_CODE: ${{ secrets.OHPM_PUBLISH_CODE }}
+      ARKTS_DISPATCH_TOKEN: ${{ secrets.ARKTS_DISPATCH_TOKEN }}
     if: needs.pre_job.outputs.should_skip != 'true'
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
       - name: Install dependencies
         run: |
           sudo apt-get update
@@ -83,44 +143,41 @@ jobs:
 
       - name: Resolve easytier version
         run: |
-          set -e
-      
-          UPSTREAM_REPO="https://github.com/EasyTier/EasyTier.git"
-      
-          git remote add upstream "$UPSTREAM_REPO" 2>/dev/null || true
-          git fetch --unshallow upstream main || git fetch upstream main
-          git fetch --tags upstream --force
-      
+          set -euo pipefail
+
+          git fetch --tags origin --force
+
           # 读取 cargo 版本
           CARGO_VERSION=$(cargo metadata --format-version 1 --no-deps --manifest-path easytier/Cargo.toml \
             | jq -r '.packages[0].version')
-      
-          # 获取 upstream/main 最新 tag
-          LAST_TAG=$(git describe --tags --abbrev=0 upstream/main 2>/dev/null || echo "")
+
+          # Version the commit that is actually checked out and built. Using
+          # upstream/main here made unrelated PR runs share one package version.
+          LAST_TAG=$(git describe --tags --abbrev=0 HEAD 2>/dev/null || echo "")
           LAST_TAG_VERSION="${LAST_TAG#v}"
-      
+
           # 语义版本比较
           version_gt() {
             [ "$(printf '%s\n' "$1" "$2" | sort -V | tail -n1)" = "$1" ] && [ "$1" != "$2" ]
           }
-      
+
           if [ -z "$LAST_TAG_VERSION" ]; then
             BASE_VERSION="$CARGO_VERSION"
-            DIFF_COUNT=$(git rev-list --count upstream/main)
+            DIFF_COUNT=0
           elif version_gt "$CARGO_VERSION" "$LAST_TAG_VERSION"; then
             BASE_VERSION="$CARGO_VERSION"
-            DIFF_COUNT=0
+            DIFF_COUNT=$(git rev-list --count "${LAST_TAG}..HEAD")
           else
             BASE_VERSION="$LAST_TAG_VERSION"
-            DIFF_COUNT=$(git rev-list --count "${LAST_TAG}..upstream/main")
+            DIFF_COUNT=$(git rev-list --count "${LAST_TAG}..HEAD")
           fi
-      
-          COMMIT_HASH=$(git rev-parse --short upstream/main)
-          EASYTIER_VERSION="${BASE_VERSION}-${DIFF_COUNT}-${COMMIT_HASH}"
-      
+
+          COMMIT_HASH=$(git rev-parse --short=8 HEAD)
+          EASYTIER_VERSION="${BASE_VERSION}-${DIFF_COUNT}.${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}.g${COMMIT_HASH}"
+
           echo "EASYTIER_VERSION=$EASYTIER_VERSION"
-          echo "EASYTIER_VERSION=$EASYTIER_VERSION" >> $GITHUB_ENV
-      
+          echo "EASYTIER_VERSION=$EASYTIER_VERSION" >> "$GITHUB_ENV"
+
           cd ./easytier-contrib/easytier-ohrs/package
           jq --arg v "$EASYTIER_VERSION" '.version = $v' oh-package.json5 > oh-package.tmp.json5
           mv oh-package.tmp.json5 oh-package.json5
@@ -203,6 +260,7 @@ jobs:
           mv package.har easytier-release.har
 
       - name: Upload artifact
+        id: upload_har
         uses: actions/upload-artifact@v5
         with:
           name: easytier-ohos
@@ -211,12 +269,60 @@ jobs:
           retention-days: 5
           if-no-files-found: error
 
+      - name: Dispatch HAR to EasyTier ArkTS
+        if: ${{ github.event_name == 'push' && env.ARKTS_DISPATCH_TOKEN != '' }}
+        env:
+          CORE_RUN_ID: ${{ github.run_id }}
+          CORE_RUN_ATTEMPT: ${{ github.run_attempt }}
+          CORE_SHA: ${{ github.sha }}
+          CORE_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+
+          HAR_PATH="./easytier-contrib/easytier-ohrs/easytier-ohrs.har"
+          HAR_SHA256=$(sha256sum "$HAR_PATH" | awk '{print $1}')
+          CORE_TREE=$(git rev-parse 'HEAD^{tree}')
+
+          jq -n \
+            --arg eventType "core-har-ready" \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg runId "$CORE_RUN_ID" \
+            --arg runAttempt "$CORE_RUN_ATTEMPT" \
+            --arg sha "$CORE_SHA" \
+            --arg tree "$CORE_TREE" \
+            --arg ref "$CORE_REF" \
+            --arg version "$EASYTIER_VERSION" \
+            --arg artifact "easytier-ohos" \
+            --arg sha256 "$HAR_SHA256" \
+            '{
+              event_type: $eventType,
+              client_payload: {
+                core_repository: $repository,
+                core_run_id: $runId,
+                core_run_attempt: $runAttempt,
+                core_sha: $sha,
+                core_tree: $tree,
+                core_ref: $ref,
+                core_version: $version,
+                artifact_name: $artifact,
+                har_sha256: $sha256
+              }
+            }' > /tmp/arkts-dispatch.json
+
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer $ARKTS_DISPATCH_TOKEN" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/FrankHan052176/EasyTier-ArkTS/dispatches" \
+            --data-binary @/tmp/arkts-dispatch.json
+
       - name: Publish To Center Ohpm
         working-directory: ./easytier-contrib/easytier-ohrs
         env:
           OHPM_PRIVATE_KEY: ${{ secrets.OHPM_PRIVATE_KEY }}
           OHPM_KEY_PASSPHRASE: ${{ secrets.OHPM_KEY_PASSPHRASE }}
-        if: ${{ env.OHPM_PUBLISH_CODE != '' && github.event_name == 'push' }}
+        if: ${{ env.OHPM_PUBLISH_CODE != '' && github.event_name == 'push' && !startsWith(github.ref, 'refs/heads/ohos/') }}
         run: |
           ohpm config set publish_id "$OHPM_PUBLISH_CODE"
           ohpm config set publish_registry https://ohpm.openharmony.cn/ohpm
@@ -234,7 +340,7 @@ jobs:
           
       - name: Publish To Private Ohpm
         working-directory: ./easytier-contrib/easytier-ohrs
-        if: ${{ env.OHPM_PUBLISH_CODE != '' && github.event_name == 'push' }}
+        if: ${{ env.OHPM_PUBLISH_CODE != '' && github.event_name == 'push' && !startsWith(github.ref, 'refs/heads/ohos/') }}
         run: |
           printf '%s' "${{ secrets.CODEARTS_PRIVATE_OHPM }}" > ~/.ohpm/.ohpmrc
           ohpm config set strict_ssl false
