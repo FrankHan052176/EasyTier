@@ -140,7 +140,10 @@ jobs:
             git \
             pkg-config curl libgl1-mesa-dev expect
 
-      - name: Resolve easytier version
+      - name: Resolve easytier package metadata
+        id: package_meta
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
 
@@ -171,23 +174,46 @@ jobs:
             DIFF_COUNT=$(git rev-list --count "${LAST_TAG}..HEAD")
           fi
 
-          # Keep the package version aligned with the Core version. Consumers
-          # resolve the moving arkts-latest tag, so CodeHub's lexicographical
-          # package-list ordering is not used to select the HAR.
-          SORTABLE_TIME=$(date -u +%Y%m%d%H%M%S)
-          DIFF_COUNT_PADDED=$(printf '%010d' "$DIFF_COUNT")
-          RUN_NUMBER_PADDED=$(printf '%010d' "$GITHUB_RUN_NUMBER")
-          RUN_ATTEMPT_PADDED=$(printf '%03d' "$GITHUB_RUN_ATTEMPT")
           COMMIT_HASH=$(git rev-parse --short=8 HEAD)
-          EASYTIER_VERSION="${BASE_VERSION}-${SORTABLE_TIME}-${DIFF_COUNT_PADDED}-${RUN_NUMBER_PADDED}-${RUN_ATTEMPT_PADDED}-g${COMMIT_HASH}"
+          EASYTIER_VERSION="${BASE_VERSION}-${DIFF_COUNT}-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}-g${COMMIT_HASH}"
+
+          # Publish one package stream per source branch. Pull requests use the
+          # head branch; tag builds use the repository default branch because a
+          # tag has no branch identity of its own.
+          if [ -n "${GITHUB_HEAD_REF:-}" ]; then
+            SOURCE_BRANCH="$GITHUB_HEAD_REF"
+          elif [ "${GITHUB_REF_TYPE:-}" = "branch" ]; then
+            SOURCE_BRANCH="$GITHUB_REF_NAME"
+          else
+            SOURCE_BRANCH="${DEFAULT_BRANCH:-main}"
+          fi
+
+          # OHPM package names are lowercase and may contain letters, digits,
+          # dots, hyphens, and underscores. Slashes become underscores as the
+          # branch-to-package mapping contract requires.
+          BRANCH_ID=$(printf '%s' "$SOURCE_BRANCH" \
+            | tr '[:upper:]/' '[:lower:]_' \
+            | sed -E 's/[^a-z0-9._-]+/_/g; s/[._-]+$//')
+          if [ -z "$BRANCH_ID" ]; then
+            BRANCH_ID="main"
+          fi
+          BRANCH_ID=$(printf '%.119s' "$BRANCH_ID" | sed -E 's/[._-]+$//')
+          if [ -z "$BRANCH_ID" ]; then
+            BRANCH_ID="main"
+          fi
+          EASYTIER_PACKAGE_NAME="easytier-${BRANCH_ID}"
 
           echo "EASYTIER_CORE_VERSION=$BASE_VERSION"
           echo "EASYTIER_VERSION=$EASYTIER_VERSION"
+          echo "EASYTIER_PACKAGE_NAME=$EASYTIER_PACKAGE_NAME"
           echo "EASYTIER_CORE_VERSION=$BASE_VERSION" >> "$GITHUB_ENV"
           echo "EASYTIER_VERSION=$EASYTIER_VERSION" >> "$GITHUB_ENV"
+          echo "EASYTIER_PACKAGE_NAME=$EASYTIER_PACKAGE_NAME" >> "$GITHUB_ENV"
+          echo "package_name=$EASYTIER_PACKAGE_NAME" >> "$GITHUB_OUTPUT"
 
           cd ./easytier-contrib/easytier-ohrs/package
-          jq --arg v "$EASYTIER_VERSION" '.version = $v' oh-package.json5 > oh-package.tmp.json5
+          jq --arg n "$EASYTIER_PACKAGE_NAME" --arg v "$EASYTIER_VERSION" \
+            '.name = $n | .version = $v' oh-package.json5 > oh-package.tmp.json5
           mv oh-package.tmp.json5 oh-package.json5
 
 
@@ -195,7 +221,7 @@ jobs:
         working-directory: ./easytier-contrib/easytier-ohrs/package
         run: |
           {
-            echo "## easytier-ohrs ${EASYTIER_VERSION}"
+            echo "## ${EASYTIER_PACKAGE_NAME} ${EASYTIER_VERSION}"
             echo
             echo "- Core version: ${EASYTIER_CORE_VERSION}"
             echo "- Core commit: ${GITHUB_SHA}"
@@ -249,7 +275,7 @@ jobs:
           ohrs doctor
           ohrs build --release --arch aarch
           ohrs artifact
-          mv package.har easytier-ohrs.har
+          mv package.har "${EASYTIER_PACKAGE_NAME}.har"
 
       - name: Build Release Package
         if: startsWith(github.ref, 'refs/tags/')
@@ -272,9 +298,8 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v5
         with:
-          name: easytier-ohos
-          path: |
-            ./easytier-contrib/easytier-ohrs/easytier-ohrs.har
+          name: ${{ steps.package_meta.outputs.package_name }}
+          path: ./easytier-contrib/easytier-ohrs/${{ steps.package_meta.outputs.package_name }}.har
           retention-days: 5
           if-no-files-found: error
 
@@ -289,7 +314,7 @@ jobs:
           ohpm config set strict_ssl false
           # The custom tag is the stable cross-version pointer consumed by
           # EasyTier ArkTS. It moves on every successful private publication.
-          ohpm publish --tag arkts-latest easytier-ohrs.har
+          ohpm publish --tag arkts-latest "${EASYTIER_PACKAGE_NAME}.har"
 
           if [ -f "easytier-release.har" ]; then
              echo "🚀 Publishing Release package..."
