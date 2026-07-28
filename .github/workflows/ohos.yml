@@ -125,6 +125,7 @@ jobs:
     needs: pre_job
     env:
       CODEARTS_PRIVATE_OHPM: ${{ secrets.CODEARTS_PRIVATE_OHPM }}
+      DOWNSTREAM_DISPATCH_TOKEN: ${{ secrets.DOWNSTREAM_DISPATCH_TOKEN }}
     if: needs.pre_job.outputs.should_skip != 'true'
     steps:
       - uses: actions/checkout@v5
@@ -210,6 +211,9 @@ jobs:
           echo "EASYTIER_VERSION=$EASYTIER_VERSION" >> "$GITHUB_ENV"
           echo "EASYTIER_PACKAGE_NAME=$EASYTIER_PACKAGE_NAME" >> "$GITHUB_ENV"
           echo "package_name=$EASYTIER_PACKAGE_NAME" >> "$GITHUB_OUTPUT"
+          echo "package_version=$EASYTIER_VERSION" >> "$GITHUB_OUTPUT"
+          echo "core_version=$BASE_VERSION" >> "$GITHUB_OUTPUT"
+          echo "source_branch=$SOURCE_BRANCH" >> "$GITHUB_OUTPUT"
 
           cd ./easytier-contrib/easytier-ohrs/package
           jq --arg n "$EASYTIER_PACKAGE_NAME" --arg v "$EASYTIER_VERSION" \
@@ -304,6 +308,7 @@ jobs:
           if-no-files-found: error
 
       - name: Publish To CodeHub Private Ohpm
+        id: publish_private_ohpm
         working-directory: ./easytier-contrib/easytier-ohrs
         if: ${{ env.CODEARTS_PRIVATE_OHPM != '' && github.event_name == 'push' }}
         run: |
@@ -320,3 +325,66 @@ jobs:
              echo "🚀 Publishing Release package..."
              ohpm publish easytier-release.har
           fi
+
+      - name: Dispatch published HAR to app repositories
+        if: >-
+          ${{
+            env.CODEARTS_PRIVATE_OHPM != '' &&
+            env.DOWNSTREAM_DISPATCH_TOKEN != '' &&
+            github.event_name == 'push' &&
+            github.ref == 'refs/heads/ohos/pro-runtime'
+          }}
+        env:
+          CORE_PACKAGE_NAME: ${{ steps.package_meta.outputs.package_name }}
+          CORE_PACKAGE_VERSION: ${{ steps.package_meta.outputs.package_version }}
+          CORE_VERSION: ${{ steps.package_meta.outputs.core_version }}
+          CORE_SOURCE_BRANCH: ${{ steps.package_meta.outputs.source_branch }}
+        run: |
+          set -euo pipefail
+
+          HAR_PATH="./easytier-contrib/easytier-ohrs/${CORE_PACKAGE_NAME}.har"
+          HAR_SHA256=$(sha256sum "$HAR_PATH" | awk '{print $1}')
+          CORE_TREE=$(git rev-parse 'HEAD^{tree}')
+
+          jq -n \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg runId "$GITHUB_RUN_ID" \
+            --arg runAttempt "$GITHUB_RUN_ATTEMPT" \
+            --arg sha "$GITHUB_SHA" \
+            --arg tree "$CORE_TREE" \
+            --arg ref "$GITHUB_REF" \
+            --arg branch "$CORE_SOURCE_BRANCH" \
+            --arg coreVersion "$CORE_VERSION" \
+            --arg packageName "$CORE_PACKAGE_NAME" \
+            --arg packageVersion "$CORE_PACKAGE_VERSION" \
+            --arg harSha256 "$HAR_SHA256" \
+            '{
+              event_type: "core-har-published",
+              client_payload: {
+                core_repository: $repository,
+                core_run_id: $runId,
+                core_run_attempt: $runAttempt,
+                core_sha: $sha,
+                core_tree: $tree,
+                core_ref: $ref,
+                core_branch: $branch,
+                core_version: $coreVersion,
+                package_name: $packageName,
+                package_version: $packageVersion,
+                har_sha256: $harSha256
+              }
+            }' > "$RUNNER_TEMP/core-har-dispatch.json"
+
+          for downstream_repository in \
+            FrankHan052176/EasyTier-ArkTS \
+            FrankHan052176/easytier-pro-app; do
+            curl --fail-with-body --silent --show-error \
+              --retry 3 \
+              --retry-all-errors \
+              --request POST \
+              --header "Accept: application/vnd.github+json" \
+              --header "Authorization: Bearer $DOWNSTREAM_DISPATCH_TOKEN" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              "$GITHUB_API_URL/repos/$downstream_repository/dispatches" \
+              --data-binary "@$RUNNER_TEMP/core-har-dispatch.json"
+          done
