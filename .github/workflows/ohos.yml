@@ -153,6 +153,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CODEARTS_PRIVATE_OHPM: ${{ secrets.CODEARTS_PRIVATE_OHPM }}
           DOWNSTREAM_DISPATCH_TOKEN: ${{ secrets.DOWNSTREAM_DISPATCH_TOKEN }}
+          PRIVATE_OHPM_REGISTRY: https://devrepo.devcloud.cn-north-4.huaweicloud.com/artgalaxy/api/ohpm/cn-north-4_c07b1b38744f424b8d87a86532d38003_ohpm_1/
         run: |
           set -euo pipefail
           if [ "$GITHUB_EVENT_NAME" = push ]; then
@@ -178,7 +179,13 @@ jobs:
           umask 077
           printf '%s' "$CODEARTS_PRIVATE_OHPM" > "$HOME/.ohpm/.ohpmrc"
           trap 'rm -f "$HOME/.ohpm/.ohpmrc"' EXIT
-          ohpm publish --tag arkts-latest "$EASYTIER_PACKAGE_NAME.har"
+          ohpm publish \
+            --tag "build-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}" \
+            "$EASYTIER_PACKAGE_NAME.har"
+          ohpm dist-tags update \
+            "$EASYTIER_PACKAGE_NAME@$EASYTIER_VERSION" \
+            arkts-latest \
+            --publish_registry "$PRIVATE_OHPM_REGISTRY"
 
           payload=$(jq -nc \
             --arg repository "$GITHUB_REPOSITORY" \
