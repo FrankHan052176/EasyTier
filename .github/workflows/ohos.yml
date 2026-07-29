@@ -182,7 +182,7 @@ jobs:
           ohpm publish \
             --tag "build-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}" \
             "$EASYTIER_PACKAGE_NAME.har"
-          ohpm dist-tags update \
+          ohpm dist-tags add \
             "$EASYTIER_PACKAGE_NAME@$EASYTIER_VERSION" \
             arkts-latest \
             --publish_registry "$PRIVATE_OHPM_REGISTRY"
