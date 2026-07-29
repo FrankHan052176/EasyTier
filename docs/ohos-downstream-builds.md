@@ -81,29 +81,60 @@ package named by `package_name` through the verified moving tag.
 
 ## Downstream install sequence
 
-ArkTS and Pro use the same two-stage OHPM flow for non-PR private builds:
+ArkTS and Pro isolate the only private-registry request from the App project:
 
-1. Configure read-only CodeArts authentication.
-2. Remove the repository's local `easytier-ohrs` dependency from the CI
-   checkout so it cannot conflict with the branch-scoped package.
-3. Install the Core package directly from the private registry:
+1. Create a minimal OHPM project under `RUNNER_TEMP`. It has no App or public
+   dependencies.
+2. Create temporary read-only CodeArts authentication for this resolver project
+   without changing OHPM's default registry.
+3. From the resolver project, install exactly one package from CodeArts:
 
    ```bash
    ohpm install "${package_name}@tag:arkts-latest" \
      --registry "https://devrepo.devcloud.cn-north-4.huaweicloud.com/artgalaxy/api/ohpm/cn-north-4_c07b1b38744f424b8d87a86532d38003_ohpm_1/"
    ```
 
-4. Verify the installed manifest and native library, then run ordinary
-   `ohpm install` to resolve the remaining project dependencies.
+4. Resolve the package link to its real installed directory and verify the
+   package name, resolved version, manifest, and native library. Consumers may
+   also verify the isolated resolver lock when their OHPM project emits one.
+5. Replace the App manifest's local `easytier-ohrs` entry with the dynamic
+   branch package name and a local directory spec:
+
+   ```text
+   <package_name>: file:<real-installed-package-directory>
+   ```
+
+   The App therefore consumes the package already installed in the resolver
+   project; it does not contact CodeArts itself.
+6. Remove the temporary private authentication/configuration and assert that it
+   is gone.
+7. From the App project, run ordinary `ohpm install` with no `--registry`
+   argument. The Core dependency is local through `file:`, while every other
+   dependency resolves through its normal default registry.
+
+The CodeArts URL is scoped to the explicit Core HAR command above. Do not run
+`ohpm config set registry` for CodeArts, persist CodeArts as the user or project
+default, pass the private URL to the second `ohpm install`, or leave a private
+`registry=` override behind. If authentication is supplied through a temporary
+`.ohpmrc`, remove it (or restore the previous config) immediately after the
+tagged Core package has been installed.
 
 Consumers do not download a HAR from a GitHub artifact, extract it, rename it,
 or rebuild/repack it. The package installed by OHPM is the package compiled by
 Core.
 
-`repository_dispatch` and manual App runs accept only `package_name`. The
-manual default is `easytier-main`; use `easytier-ohos_pro-runtime` while testing
-the current Pro runtime branch. There are no `package_version`, `core_sha`, or
-`core_version` inputs.
+`repository_dispatch` and manual App runs accept only `package_name`. Both
+consumers log the complete requested package spec and record it in the build
+summary. The concrete specs are:
+
+| Selection | Logged/requested spec |
+| --- | --- |
+| Default `main` | `easytier-main@tag:arkts-latest` |
+| Current Pro runtime test | `easytier-ohos_pro-runtime@tag:arkts-latest` |
+
+There are no `package_version`, `core_sha`, or `core_version` inputs. The
+resolved version is recorded only after OHPM installs and verifies the tagged
+package.
 
 ## Repository configuration
 
@@ -115,8 +146,9 @@ Configure these Actions secrets in the Core repository:
 
 Configure these Actions secrets in both App repositories:
 
-- `CODEARTS_PRIVATE_OHPM_READ`: read-only `.ohpmrc` content for the private
-  registry.
+- `CODEARTS_PRIVATE_OHPM_READ`: read-only CodeArts authentication material for
+  a temporary OHPM config used only by the explicit Core HAR install. It must
+  not persist CodeArts as the default registry.
 - `SIGNING_REPOSITORY_TOKEN`: fine-grained token with read-only access to that
   App's private signing repository.
 
