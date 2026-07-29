@@ -94,9 +94,8 @@ ArkTS and Pro isolate the only private-registry request from the App project:
      --registry "https://devrepo.devcloud.cn-north-4.huaweicloud.com/artgalaxy/api/ohpm/cn-north-4_c07b1b38744f424b8d87a86532d38003_ohpm_1/"
    ```
 
-4. Resolve the package link to its real installed directory and verify the
-   package name, resolved version, manifest, and native library. Consumers may
-   also verify the isolated resolver lock when their OHPM project emits one.
+4. After the install succeeds, follow the installed package link with `cd` and
+   `pwd -P` to obtain its real local directory.
 5. Replace the App manifest's local `easytier-ohrs` entry with the dynamic
    branch package name and a local directory spec:
 
@@ -106,8 +105,7 @@ ArkTS and Pro isolate the only private-registry request from the App project:
 
    The App therefore consumes the package already installed in the resolver
    project; it does not contact CodeArts itself.
-6. Remove the temporary private authentication/configuration and assert that it
-   is gone.
+6. Remove the temporary private authentication/configuration.
 7. From the App project, run ordinary `ohpm install` with no `--registry`
    argument. The Core dependency is local through `file:`, while every other
    dependency resolves through its normal default registry.
@@ -121,20 +119,23 @@ tagged Core package has been installed.
 
 Consumers do not download a HAR from a GitHub artifact, extract it, rename it,
 or rebuild/repack it. The package installed by OHPM is the package compiled by
-Core.
+Core. Consumers trust that published package rather than repeating Core's
+artifact checks: they do not inspect its package metadata or resolved version,
+cross-check a resolver lock, probe the native library, or validate registry
+configuration. Package acquisition is allowed to fail naturally at the private
+`ohpm install`; later dependency or integration problems fail the ordinary
+`ohpm install` or App build.
 
 `repository_dispatch` and manual App runs accept only `package_name`. Both
-consumers log the complete requested package spec and record it in the build
-summary. The concrete specs are:
+consumers log only the complete requested package spec. The concrete specs are:
 
 | Selection | Logged/requested spec |
 | --- | --- |
 | Default `main` | `easytier-main@tag:arkts-latest` |
 | Current Pro runtime test | `easytier-ohos_pro-runtime@tag:arkts-latest` |
 
-There are no `package_version`, `core_sha`, or `core_version` inputs. The
-resolved version is recorded only after OHPM installs and verifies the tagged
-package.
+There are no `package_version`, `core_sha`, or `core_version` inputs, and the
+consumers do not record a resolved Core version.
 
 ## Repository configuration
 
