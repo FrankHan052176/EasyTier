@@ -10,6 +10,12 @@ on:
     branches: [develop, main, "ohos/**"]
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish this non-main branch and dispatch downstream builds
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -83,13 +89,13 @@ jobs:
             fi
           fi
           branch_id=$(printf '%s' "$source_branch" \
-            | tr '[:upper:]/' '[:lower:]_' \
-            | sed -E 's/[^a-z0-9._-]+/_/g; s/[._-]+$//' \
-            | cut -c1-119)
+            | tr '[:upper:]' '[:lower:]' \
+            | sed -E 's/[^a-z0-9-]+/-/g; s/^-+//; s/-+$//' \
+            | cut -c1-64)
           branch_id=${branch_id:-main}
 
-          package_name="easytier-$branch_id"
-          package_version="${base_version}-${commit_count}-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}-g$(git rev-parse --short=8 HEAD)"
+          package_name=easytier-ohrs
+          package_version="${base_version}-${branch_id}-${commit_count}-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}-g$(git rev-parse --short=8 HEAD)"
           echo "name=$package_name" >> "$GITHUB_OUTPUT"
           echo "EASYTIER_PACKAGE_NAME=$package_name" >> "$GITHUB_ENV"
           echo "EASYTIER_VERSION=$package_version" >> "$GITHUB_ENV"
@@ -133,8 +139,15 @@ jobs:
           retention-days: 5
           if-no-files-found: error
 
-      - name: Publish and dispatch merged PR
-        if: github.event_name == 'push' && github.ref_type == 'branch' && github.event.forced != true
+      - name: Publish and dispatch
+        if: >-
+          (github.event_name == 'push' &&
+           github.ref_type == 'branch' &&
+           github.ref_name == 'main' &&
+           github.event.forced != true) ||
+          (github.event_name == 'workflow_dispatch' &&
+           github.ref_type == 'branch' &&
+           (github.ref_name == 'main' || inputs.publish))
         working-directory: easytier-contrib/easytier-ohrs
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -142,21 +155,23 @@ jobs:
           DOWNSTREAM_DISPATCH_TOKEN: ${{ secrets.DOWNSTREAM_DISPATCH_TOKEN }}
         run: |
           set -euo pipefail
-          pull_requests=$(gh api \
-            -H "Accept: application/vnd.github+json" \
-            "/repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls")
-          if ! jq -e \
-            --arg repository "$GITHUB_REPOSITORY" \
-            --arg branch "$GITHUB_REF_NAME" \
-            --arg sha "$GITHUB_SHA" \
-            'any(.[];
-              .merged_at != null and
-              .base.repo.full_name == $repository and
-              .base.ref == $branch and
-              .merge_commit_sha == $sha)' \
-            <<< "$pull_requests" >/dev/null; then
-            echo "Direct push: HAR built without publishing."
-            exit 0
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            pull_requests=$(gh api \
+              -H "Accept: application/vnd.github+json" \
+              "/repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls")
+            if ! jq -e \
+              --arg repository "$GITHUB_REPOSITORY" \
+              --arg branch "$GITHUB_REF_NAME" \
+              --arg sha "$GITHUB_SHA" \
+              'any(.[];
+                .merged_at != null and
+                .base.repo.full_name == $repository and
+                .base.ref == $branch and
+                .merge_commit_sha == $sha)' \
+              <<< "$pull_requests" >/dev/null; then
+              echo "Direct push: HAR built without publishing."
+              exit 0
+            fi
           fi
 
           mkdir -p "$HOME/.ohpm"
