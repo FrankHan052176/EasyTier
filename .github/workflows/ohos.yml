@@ -1,21 +1,15 @@
-name: EasyTier OHOS
+name: ohos
 
 on:
   push:
-    branches: ["develop", "main", "releases/**", "ohos/**"]
+    branches: [develop, main, "releases/**", "ohos/**"]
     tags:
-      - 'v*'
-      - '!*-pre'
+      - "v*"
+      - "!*-pre"
   pull_request:
-    branches: ["develop", "main", "ohos/**"]
+    branches: [develop, main, "ohos/**"]
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
-
-concurrency:
-  # Keep only superseded validations mutually exclusive. Each push gets its own
-  # group so a later direct push cannot cancel a merged-PR publication run.
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -23,328 +17,174 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  CODEARTS_OHPM_REGISTRY: https://devrepo.devcloud.cn-north-4.huaweicloud.com/artgalaxy/api/ohpm/cn-north-4_c07b1b38744f424b8d87a86532d38003_ohpm_1/
 
 defaults:
   run:
-    # necessary for windows
     shell: bash
 
 jobs:
-  cargo_fmt_check:
+  ohos:
+    name: ohos
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
 
-      - name: Prepare build environment
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up Rust
         uses: ./.github/actions/prepare-build
         with:
+          target: aarch64-unknown-linux-ohos
           gui: false
           pnpm: false
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Set up HarmonyOS
+        uses: ErBWs/setup-ohos@v1
+
+      - name: Install ohrs
+        uses: taiki-e/install-action@v2
         with:
-          components: rustfmt
+          tool: ohrs
 
-      - name: Check formatting
-        working-directory: ./easytier-contrib/easytier-ohrs
-        run: cargo fmt --all -- --check
-
-  build-ohos:
-    runs-on: ubuntu-latest
-    needs: cargo_fmt_check
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-
-      - name: Resolve private publication policy
-        id: publish_policy
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PUSH_FORCED: ${{ github.event.forced }}
-        run: |
-          set -euo pipefail
-
-          echo "should_publish=false" >> "$GITHUB_OUTPUT"
-
-          # Every event builds the HAR, but only a branch push created by a
-          # merged pull request may publish it. Direct pushes, tags, manual
-          # runs, and pull-request validation runs remain build-only.
-          if [ "$GITHUB_EVENT_NAME" != "push" ] || [ "$GITHUB_REF_TYPE" != "branch" ]; then
-            exit 0
-          fi
-
-          if [ "${PUSH_FORCED:-false}" = "true" ]; then
-            echo "::notice::Forced pushes are always build-only."
-            exit 0
-          fi
-
-          RESPONSE_FILE="$RUNNER_TEMP/associated-pull-requests.json"
-          API_URL="$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls"
-          for attempt in 1 2 3 4 5; do
-            if curl --fail --silent --show-error \
-              --connect-timeout 10 \
-              --max-time 30 \
-              --header "Accept: application/vnd.github+json" \
-              --header "Authorization: Bearer $GH_TOKEN" \
-              --header "X-GitHub-Api-Version: 2022-11-28" \
-              "$API_URL" > "$RESPONSE_FILE" && \
-              jq -e \
-                --arg repository "$GITHUB_REPOSITORY" \
-                --arg branch "$GITHUB_REF_NAME" \
-                --arg sha "$GITHUB_SHA" \
-                'any(.[];
-                  .merged_at != null and
-                  .base.repo.full_name == $repository and
-                  .base.ref == $branch and
-                  .merge_commit_sha == $sha)' \
-                "$RESPONSE_FILE" >/dev/null; then
-              echo "should_publish=true" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-
-            if [ "$attempt" -lt 5 ]; then
-              echo "::notice::Merged-PR association is not visible yet (attempt $attempt/5); retrying."
-              sleep $((attempt * 2))
-            fi
-          done
-
-          echo "::notice::No matching merged PR was confirmed; keeping this run build-only."
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -qq \
-            build-essential \
-            git \
-            pkg-config curl libgl1-mesa-dev expect
-
-      - name: Resolve easytier package metadata
-        id: package_meta
+      - name: Build HAR
+        id: package
         env:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
+          sudo apt-get install -qqy \
+            pkg-config curl libgl1-mesa-dev expect llvm clang lldb lld
+          rustup component add rustfmt
+          cargo fmt --all --manifest-path \
+            easytier-contrib/easytier-ohrs/Cargo.toml -- --check
 
-          git fetch --tags origin --force
-
-          # 读取 cargo 版本
-          CARGO_VERSION=$(cargo metadata --format-version 1 --no-deps --manifest-path easytier/Cargo.toml \
-            | jq -r '.packages[0].version')
-
-          # Version the commit that is actually checked out and built. Using
-          # upstream/main here made unrelated PR runs share one package version.
-          LAST_TAG=$(git describe --tags --abbrev=0 HEAD 2>/dev/null || echo "")
-          LAST_TAG_VERSION="${LAST_TAG#v}"
-
-          # 语义版本比较
-          version_gt() {
-            [ "$(printf '%s\n' "$1" "$2" | sort -V | tail -n1)" = "$1" ] && [ "$1" != "$2" ]
-          }
-
-          if [ -z "$LAST_TAG_VERSION" ]; then
-            BASE_VERSION="$CARGO_VERSION"
-            DIFF_COUNT=0
-          elif version_gt "$CARGO_VERSION" "$LAST_TAG_VERSION"; then
-            BASE_VERSION="$CARGO_VERSION"
-            DIFF_COUNT=$(git rev-list --count "${LAST_TAG}..HEAD")
+          cargo_version=$(cargo metadata --format-version 1 --no-deps \
+            --manifest-path easytier/Cargo.toml | jq -r '.packages[0].version')
+          last_tag=$(git describe --tags --abbrev=0 HEAD 2>/dev/null || true)
+          if [ -n "$last_tag" ]; then
+            base_version=$(printf '%s\n' "$cargo_version" "${last_tag#v}" \
+              | sort -V | tail -n 1)
+            commit_count=$(git rev-list --count "$last_tag..HEAD")
           else
-            BASE_VERSION="$LAST_TAG_VERSION"
-            DIFF_COUNT=$(git rev-list --count "${LAST_TAG}..HEAD")
+            base_version=$cargo_version
+            commit_count=0
           fi
 
-          COMMIT_HASH=$(git rev-parse --short=8 HEAD)
-          EASYTIER_VERSION="${BASE_VERSION}-${DIFF_COUNT}-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}-g${COMMIT_HASH}"
-
-          # Publish one package stream per source branch. Pull requests use the
-          # head branch; tag builds use the repository default branch because a
-          # tag has no branch identity of its own.
-          if [ -n "${GITHUB_HEAD_REF:-}" ]; then
-            SOURCE_BRANCH="$GITHUB_HEAD_REF"
-          elif [ "${GITHUB_REF_TYPE:-}" = "branch" ]; then
-            SOURCE_BRANCH="$GITHUB_REF_NAME"
-          else
-            SOURCE_BRANCH="${DEFAULT_BRANCH:-main}"
+          source_branch=${GITHUB_HEAD_REF:-}
+          if [ -z "$source_branch" ]; then
+            if [ "$GITHUB_REF_TYPE" = branch ]; then
+              source_branch=$GITHUB_REF_NAME
+            else
+              source_branch=${DEFAULT_BRANCH:-main}
+            fi
           fi
-
-          # OHPM package names are lowercase and may contain letters, digits,
-          # dots, hyphens, and underscores. Slashes become underscores as the
-          # branch-to-package mapping contract requires.
-          BRANCH_ID=$(printf '%s' "$SOURCE_BRANCH" \
+          branch_id=$(printf '%s' "$source_branch" \
             | tr '[:upper:]/' '[:lower:]_' \
-            | sed -E 's/[^a-z0-9._-]+/_/g; s/[._-]+$//')
-          if [ -z "$BRANCH_ID" ]; then
-            BRANCH_ID="main"
-          fi
-          BRANCH_ID=$(printf '%.119s' "$BRANCH_ID" | sed -E 's/[._-]+$//')
-          if [ -z "$BRANCH_ID" ]; then
-            BRANCH_ID="main"
-          fi
-          EASYTIER_PACKAGE_NAME="easytier-${BRANCH_ID}"
+            | sed -E 's/[^a-z0-9._-]+/_/g; s/[._-]+$//' \
+            | cut -c1-119)
+          branch_id=${branch_id:-main}
 
-          echo "EASYTIER_CORE_VERSION=$BASE_VERSION"
-          echo "EASYTIER_VERSION=$EASYTIER_VERSION"
-          echo "EASYTIER_PACKAGE_NAME=$EASYTIER_PACKAGE_NAME"
-          echo "EASYTIER_CORE_VERSION=$BASE_VERSION" >> "$GITHUB_ENV"
-          echo "EASYTIER_VERSION=$EASYTIER_VERSION" >> "$GITHUB_ENV"
-          echo "EASYTIER_PACKAGE_NAME=$EASYTIER_PACKAGE_NAME" >> "$GITHUB_ENV"
-          echo "package_name=$EASYTIER_PACKAGE_NAME" >> "$GITHUB_OUTPUT"
-          echo "source_ref=refs/heads/$SOURCE_BRANCH" >> "$GITHUB_OUTPUT"
+          package_name="easytier-$branch_id"
+          package_version="${base_version}-${commit_count}-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}-g$(git rev-parse --short=8 HEAD)"
+          echo "name=$package_name" >> "$GITHUB_OUTPUT"
+          echo "EASYTIER_PACKAGE_NAME=$package_name" >> "$GITHUB_ENV"
+          echo "EASYTIER_VERSION=$package_version" >> "$GITHUB_ENV"
 
-          cd ./easytier-contrib/easytier-ohrs/package
-          jq --arg n "$EASYTIER_PACKAGE_NAME" --arg v "$EASYTIER_VERSION" \
-            '.name = $n | .version = $v' oh-package.json5 > oh-package.tmp.json5
-          mv oh-package.tmp.json5 oh-package.json5
-
-
-      - name: Generate CHANGELOG.md for current commit
-        working-directory: ./easytier-contrib/easytier-ohrs/package
-        run: |
+          package_dir=easytier-contrib/easytier-ohrs/package
+          jq --arg name "$package_name" --arg version "$package_version" \
+            '.name = $name | .version = $version' \
+            "$package_dir/oh-package.json5" > "$package_dir/oh-package.tmp.json5"
+          mv "$package_dir/oh-package.tmp.json5" "$package_dir/oh-package.json5"
           {
-            echo "## ${EASYTIER_PACKAGE_NAME} ${EASYTIER_VERSION}"
+            echo "## $package_name $package_version"
             echo
-            echo "- Core version: ${EASYTIER_CORE_VERSION}"
-            echo "- Core commit: ${GITHUB_SHA}"
-            git log -1 --pretty=format:"- %s"
+            echo "- Core version: $base_version"
+            echo "- Core commit: $GITHUB_SHA"
+            git log -1 --pretty=format:'- %s'
             echo
-          } > CHANGELOG.md
+          } > "$package_dir/CHANGELOG.md"
 
-      - name: Setup HarmonyOS CLI tools
-        uses: ErBWs/setup-ohos@v1
-
-      - name: Setup build environment
-        run: |
-          echo "TARGET_ARCH=aarch64-linux-ohos" >> $GITHUB_ENV
-
-          rustup install stable
-          rustup default stable
-
-          rustup target add aarch64-unknown-linux-ohos
-
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: ohrs
-
-      - name: Create clang wrapper script
-        run: |
-          sudo mkdir -p $OHOS_NDK_HOME/native/llvm
-          sudo tee $OHOS_NDK_HOME/native/llvm/aarch64-unknown-linux-ohos-clang.sh > /dev/null <<'EOF'
+          sudo mkdir -p "$OHOS_NDK_HOME/native/llvm"
+          sudo tee "$OHOS_NDK_HOME/native/llvm/aarch64-unknown-linux-ohos-clang.sh" >/dev/null <<'EOF'
           #!/bin/sh
-          exec $OHOS_NDK_HOME/native/llvm/bin/clang \
+          exec "$OHOS_NDK_HOME/native/llvm/bin/clang" \
             -target aarch64-linux-ohos \
-            --sysroot=$OHOS_NDK_HOME/native/sysroot \
-            -D__MUSL__ \
-            "$@"
+            --sysroot="$OHOS_NDK_HOME/native/sysroot" \
+            -D__MUSL__ "$@"
           EOF
-          sudo chmod +x $OHOS_NDK_HOME/native/llvm/aarch64-unknown-linux-ohos-clang.sh
+          sudo chmod +x \
+            "$OHOS_NDK_HOME/native/llvm/aarch64-unknown-linux-ohos-clang.sh"
 
-      - name: Build latest Har
-        working-directory: ./easytier-contrib/easytier-ohrs
-        run: |
-          sudo apt-get install -y llvm clang lldb lld
-          sudo apt-get install -y protobuf-compiler
+          cd easytier-contrib/easytier-ohrs
           source env.sh
-          ohrs doctor
           ohrs build --release --arch aarch
           ohrs artifact
-          mv package.har "${EASYTIER_PACKAGE_NAME}.har"
+          mv package.har "$package_name.har"
 
-      - name: Upload artifact
+      - name: Upload HAR
         uses: actions/upload-artifact@v5
         with:
-          name: ${{ steps.package_meta.outputs.package_name }}
-          path: ./easytier-contrib/easytier-ohrs/${{ steps.package_meta.outputs.package_name }}.har
+          name: ${{ steps.package.outputs.name }}
+          path: easytier-contrib/easytier-ohrs/${{ steps.package.outputs.name }}.har
           retention-days: 5
           if-no-files-found: error
 
-      - name: Publish To CodeHub Private Ohpm
-        id: publish_private_ohpm
-        working-directory: ./easytier-contrib/easytier-ohrs
-        if: ${{ steps.publish_policy.outputs.should_publish == 'true' }}
+      - name: Publish and dispatch merged PR
+        if: github.event_name == 'push' && github.ref_type == 'branch' && github.event.forced != true
+        working-directory: easytier-contrib/easytier-ohrs
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CODEARTS_PRIVATE_OHPM: ${{ secrets.CODEARTS_PRIVATE_OHPM }}
-        run: |
-          set -euo pipefail
-
-          if [ -z "$CODEARTS_PRIVATE_OHPM" ]; then
-            echo "::error::CODEARTS_PRIVATE_OHPM is required for merged-PR publication."
-            exit 1
-          fi
-
-          mkdir -p ~/.ohpm
-          umask 077
-          printf '%s' "$CODEARTS_PRIVATE_OHPM" > ~/.ohpm/.ohpmrc
-          trap 'rm -f "$HOME/.ohpm/.ohpmrc"' EXIT
-          ohpm config set strict_ssl false
-          # `latest` is reserved by OHPM and an untagged install treats it as
-          # `*`, which can select CodeArts' lexicographically newest version.
-          # Use a non-reserved moving tag so consumers resolve this exact HAR.
-          ohpm publish --tag arkts-latest "${EASYTIER_PACKAGE_NAME}.har"
-
-          tagged_version=""
-          TAGS_FILE="$RUNNER_TEMP/easytier-ohpm-dist-tags.txt"
-          for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
-            if NO_COLOR=1 ohpm dist-tags list "$EASYTIER_PACKAGE_NAME" \
-              --registry "$CODEARTS_OHPM_REGISTRY" > "$TAGS_FILE"; then
-              tagged_version="$(awk '$1 == "arkts-latest:" { print $2; exit }' "$TAGS_FILE")"
-              if [ "$tagged_version" = "$EASYTIER_VERSION" ]; then
-                break
-              fi
-            fi
-
-            if [ "$attempt" -lt 12 ]; then
-              echo "arkts-latest is not ready yet (attempt $attempt/12); retrying."
-              sleep 5
-            fi
-          done
-
-          if [ "$tagged_version" != "$EASYTIER_VERSION" ]; then
-            echo "::error::arkts-latest resolves to ${tagged_version:-<none>} instead of $EASYTIER_VERSION."
-            exit 1
-          fi
-          echo "Verified arkts-latest -> $tagged_version"
-
-      - name: Dispatch published HAR to app repositories
-        if: ${{ steps.publish_private_ohpm.outcome == 'success' }}
-        env:
           DOWNSTREAM_DISPATCH_TOKEN: ${{ secrets.DOWNSTREAM_DISPATCH_TOKEN }}
-          CORE_PACKAGE_NAME: ${{ steps.package_meta.outputs.package_name }}
-          CORE_REF: ${{ steps.package_meta.outputs.source_ref }}
         run: |
           set -euo pipefail
-
-          if [ -z "$DOWNSTREAM_DISPATCH_TOKEN" ]; then
-            echo "::error::DOWNSTREAM_DISPATCH_TOKEN is required after publication."
-            exit 1
+          pull_requests=$(gh api \
+            -H "Accept: application/vnd.github+json" \
+            "/repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls")
+          if ! jq -e \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg branch "$GITHUB_REF_NAME" \
+            --arg sha "$GITHUB_SHA" \
+            'any(.[];
+              .merged_at != null and
+              .base.repo.full_name == $repository and
+              .base.ref == $branch and
+              .merge_commit_sha == $sha)' \
+            <<< "$pull_requests" >/dev/null; then
+            echo "Direct push: HAR built without publishing."
+            exit 0
           fi
 
-          jq -n \
+          mkdir -p "$HOME/.ohpm"
+          umask 077
+          printf '%s' "$CODEARTS_PRIVATE_OHPM" > "$HOME/.ohpm/.ohpmrc"
+          trap 'rm -f "$HOME/.ohpm/.ohpmrc"' EXIT
+          ohpm publish --tag arkts-latest "$EASYTIER_PACKAGE_NAME.har"
+
+          payload=$(jq -nc \
             --arg repository "$GITHUB_REPOSITORY" \
-            --arg ref "$CORE_REF" \
-            --arg packageName "$CORE_PACKAGE_NAME" \
+            --arg ref "refs/heads/$GITHUB_REF_NAME" \
+            --arg package "$EASYTIER_PACKAGE_NAME" \
             '{
               event_type: "core-har-published",
               client_payload: {
                 core_repository: $repository,
                 core_ref: $ref,
-                package_name: $packageName
+                package_name: $package
               }
-            }' > "$RUNNER_TEMP/core-har-dispatch.json"
-
-          for downstream_repository in \
+            }')
+          for repository in \
             FrankHan052176/EasyTier-ArkTS \
             FrankHan052176/easytier-pro-app; do
             curl --fail-with-body --silent --show-error \
-              --retry 3 \
-              --retry-all-errors \
-              --request POST \
-              --header "Accept: application/vnd.github+json" \
-              --header "Authorization: Bearer $DOWNSTREAM_DISPATCH_TOKEN" \
-              --header "X-GitHub-Api-Version: 2022-11-28" \
-              "$GITHUB_API_URL/repos/$downstream_repository/dispatches" \
-              --data-binary "@$RUNNER_TEMP/core-har-dispatch.json"
+              -X POST \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer $DOWNSTREAM_DISPATCH_TOKEN" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "$GITHUB_API_URL/repos/$repository/dispatches" \
+              --data "$payload"
           done
