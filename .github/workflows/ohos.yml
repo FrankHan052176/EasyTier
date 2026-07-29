@@ -209,9 +209,6 @@ jobs:
           echo "EASYTIER_VERSION=$EASYTIER_VERSION" >> "$GITHUB_ENV"
           echo "EASYTIER_PACKAGE_NAME=$EASYTIER_PACKAGE_NAME" >> "$GITHUB_ENV"
           echo "package_name=$EASYTIER_PACKAGE_NAME" >> "$GITHUB_OUTPUT"
-          echo "package_version=$EASYTIER_VERSION" >> "$GITHUB_OUTPUT"
-          echo "core_version=$BASE_VERSION" >> "$GITHUB_OUTPUT"
-          echo "source_branch=$SOURCE_BRANCH" >> "$GITHUB_OUTPUT"
 
           cd ./easytier-contrib/easytier-ohrs/package
           jq --arg n "$EASYTIER_PACKAGE_NAME" --arg v "$EASYTIER_VERSION" \
@@ -307,8 +304,8 @@ jobs:
           mkdir -p ~/.ohpm
           printf '%s' "$CODEARTS_PRIVATE_OHPM" > ~/.ohpm/.ohpmrc
           ohpm config set strict_ssl false
-          # The custom tag is the stable cross-version pointer consumed by
-          # EasyTier ArkTS. It moves on every successful private publication.
+          # The custom tag is the stable cross-version pointer consumed by the
+          # ArkTS and Pro app workflows. It moves after every publication.
           ohpm publish --tag arkts-latest "${EASYTIER_PACKAGE_NAME}.har"
 
           if [ -f "easytier-release.har" ]; then
@@ -326,42 +323,19 @@ jobs:
           }}
         env:
           CORE_PACKAGE_NAME: ${{ steps.package_meta.outputs.package_name }}
-          CORE_PACKAGE_VERSION: ${{ steps.package_meta.outputs.package_version }}
-          CORE_VERSION: ${{ steps.package_meta.outputs.core_version }}
-          CORE_SOURCE_BRANCH: ${{ steps.package_meta.outputs.source_branch }}
         run: |
           set -euo pipefail
 
-          HAR_PATH="./easytier-contrib/easytier-ohrs/${CORE_PACKAGE_NAME}.har"
-          HAR_SHA256=$(sha256sum "$HAR_PATH" | awk '{print $1}')
-          CORE_TREE=$(git rev-parse 'HEAD^{tree}')
-
           jq -n \
             --arg repository "$GITHUB_REPOSITORY" \
-            --arg runId "$GITHUB_RUN_ID" \
-            --arg runAttempt "$GITHUB_RUN_ATTEMPT" \
-            --arg sha "$GITHUB_SHA" \
-            --arg tree "$CORE_TREE" \
             --arg ref "$GITHUB_REF" \
-            --arg branch "$CORE_SOURCE_BRANCH" \
-            --arg coreVersion "$CORE_VERSION" \
             --arg packageName "$CORE_PACKAGE_NAME" \
-            --arg packageVersion "$CORE_PACKAGE_VERSION" \
-            --arg harSha256 "$HAR_SHA256" \
             '{
               event_type: "core-har-published",
               client_payload: {
                 core_repository: $repository,
-                core_run_id: $runId,
-                core_run_attempt: $runAttempt,
-                core_sha: $sha,
-                core_tree: $tree,
                 core_ref: $ref,
-                core_branch: $branch,
-                core_version: $coreVersion,
-                package_name: $packageName,
-                package_version: $packageVersion,
-                har_sha256: $harSha256
+                package_name: $packageName
               }
             }' > "$RUNNER_TEMP/core-har-dispatch.json"
 
