@@ -141,6 +141,7 @@ where
     let socket = factory
         .bind_udp(
             UdpBindOptions::hole_punch_control()
+                .with_need_protect(false)
                 .with_context(context.with_ip_version(IpVersion::V4))
                 .with_local_addr(Some(SocketAddr::V4(SocketAddrV4::new(
                     Ipv4Addr::LOCALHOST,
@@ -167,6 +168,7 @@ where
     let socket = factory
         .bind_udp(
             UdpBindOptions::hole_punch_control()
+                .with_need_protect(false)
                 .with_context(context.with_ip_version(IpVersion::V6))
                 .with_local_addr(Some(SocketAddr::V6(SocketAddrV6::new(
                     Ipv6Addr::LOCALHOST,
@@ -227,7 +229,7 @@ impl UdpBindOptions {
     }
 
     pub fn hole_punch_control() -> Self {
-        Self::for_purpose(UdpSocketPurpose::HolePunchControl).with_need_protect(false)
+        Self::for_purpose(UdpSocketPurpose::HolePunchControl)
     }
 
     pub fn hole_punch_candidate() -> Self {
@@ -254,7 +256,7 @@ impl UdpBindOptions {
     }
 
     pub fn socks5() -> Self {
-        Self::for_purpose(UdpSocketPurpose::Socks5).with_need_protect(false)
+        Self::for_purpose(UdpSocketPurpose::Socks5)
     }
 
     pub fn port_forward(local_addr: SocketAddr) -> Self {
@@ -317,8 +319,8 @@ impl UdpBindOptions {
 
 impl Default for UdpBindOptions {
     fn default() -> Self {
-        // Preserve the existing default purpose/socket setup, but only the
-        // explicit hole_punch_control constructor opts out of VPN bypass.
+        // Preserve the existing default purpose/socket setup; local-only
+        // control packets opt out explicitly at their loopback call sites.
         Self::for_purpose(UdpSocketPurpose::HolePunchControl)
     }
 }
@@ -332,13 +334,13 @@ mod option_tests {
         let local = SocketAddr::from(([0, 0, 0, 0], 11010));
 
         assert!(UdpBindOptions::default().need_protect);
-        assert!(!UdpBindOptions::hole_punch_control().need_protect);
+        assert!(UdpBindOptions::hole_punch_control().need_protect);
         assert!(UdpBindOptions::hole_punch_candidate().need_protect);
         assert!(UdpBindOptions::direct_connect().need_protect);
         assert!(UdpBindOptions::port_bound_listener(local).need_protect);
         assert!(UdpBindOptions::proxy_nat().need_protect);
         assert!(UdpBindOptions::stun_probe().need_protect);
-        assert!(!UdpBindOptions::socks5().need_protect);
+        assert!(UdpBindOptions::socks5().need_protect);
         assert!(!UdpBindOptions::port_forward(local).need_protect);
         assert!(!UdpBindOptions::port_lease(local).need_protect);
     }

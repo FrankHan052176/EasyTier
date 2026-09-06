@@ -18,8 +18,10 @@ use igd_next::{
     },
 };
 use natpmp::{
-    Protocol as NatPmpProtocol, Response as NatPmpResponse, new_tokio_natpmp, new_tokio_natpmp_with,
+    Protocol as NatPmpProtocol, Response as NatPmpResponse, get_default_gateway,
+    new_natpmp_async_with,
 };
+use tokio::net::UdpSocket;
 
 use super::netns::NetNS;
 
@@ -30,6 +32,26 @@ const UPNP_LEASE_DURATION_SECS: u32 = 300;
 const UPNP_DESCRIPTION: &str = "EasyTier udp hole punch";
 
 type TokioGateway = Gateway<Tokio>;
+
+async fn new_protected_natpmp(
+    gateway: Option<Ipv4Addr>,
+) -> anyhow::Result<natpmp::NatpmpAsync<UdpSocket>> {
+    let gateway = gateway
+        .map(Ok)
+        .unwrap_or_else(|| get_default_gateway().map_err(anyhow::Error::from))?;
+    let gateway_addr = SocketAddr::V4(SocketAddrV4::new(gateway, natpmp::NATPMP_PORT));
+    let socket = crate::socket::udp::create_udp_socket(
+        &easytier_core::socket::udp::UdpBindOptions::direct_connect()
+            .with_local_addr(Some("0.0.0.0:0".parse().unwrap())),
+    )
+    .await
+    .context("create protected nat-pmp socket")?;
+    socket
+        .connect(gateway_addr)
+        .await
+        .with_context(|| format!("connect nat-pmp socket to gateway {gateway}"))?;
+    Ok(new_natpmp_async_with(socket, gateway))
+}
 
 enum PortMappingBackend {
     NatPmp { gateway: Ipv4Addr },
@@ -65,7 +87,9 @@ impl ActiveUdpPortMapping {
     async fn discover_nat_pmp_gateway(
         local_listener: &url::Url,
     ) -> anyhow::Result<(Ipv4Addr, SocketAddr)> {
-        let client = new_tokio_natpmp().await.context("create nat-pmp client")?;
+        let client = new_protected_natpmp(None)
+            .await
+            .context("create nat-pmp client")?;
         let gateway = *client.gateway();
         let gateway_addr = SocketAddr::V4(SocketAddrV4::new(gateway, natpmp::NATPMP_PORT));
         let local_addr = resolve_internal_addr(gateway_addr, local_listener).await?;
@@ -433,7 +457,7 @@ async fn request_nat_pmp_mapping(
     public_port: u16,
     lifetime_secs: u32,
 ) -> anyhow::Result<u16> {
-    let client = new_tokio_natpmp_with(gateway)
+    let client = new_protected_natpmp(Some(gateway))
         .await
         .with_context(|| format!("create nat-pmp client for gateway {gateway}"))?;
     client

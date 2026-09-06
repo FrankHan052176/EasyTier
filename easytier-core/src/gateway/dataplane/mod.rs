@@ -590,8 +590,6 @@ where
         })?;
         let overlay_destination = if local_virtual_destination {
             true
-        } else if dst_ip.is_loopback() {
-            false
         } else {
             let (peers, _) = options
                 .deadline
