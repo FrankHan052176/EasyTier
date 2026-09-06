@@ -201,7 +201,8 @@ pub struct UdpBindOptions {
     pub context: SocketContext,
     /// Request host VPN bypass before bind or datagram I/O. Protection must be
     /// acknowledged inside creation, not emitted as a fire-and-forget event.
-    #[serde(default)]
+    /// Defaults to true; local/TUN-facing endpoints explicitly opt out.
+    #[serde(default = "crate::socket::default_need_protect")]
     pub need_protect: bool,
     pub local_addr: Option<SocketAddr>,
     pub bind_device: Option<String>,
@@ -213,16 +214,9 @@ pub struct UdpBindOptions {
 
 impl UdpBindOptions {
     fn for_purpose(purpose: UdpSocketPurpose) -> Self {
-        let need_protect = !matches!(
-            purpose,
-            UdpSocketPurpose::HolePunchControl
-                | UdpSocketPurpose::Socks5
-                | UdpSocketPurpose::PortForward
-                | UdpSocketPurpose::PortLease
-        );
         Self {
             context: SocketContext::default(),
-            need_protect,
+            need_protect: crate::socket::default_need_protect(),
             local_addr: None,
             bind_device: None,
             reuse_addr: false,
@@ -233,7 +227,7 @@ impl UdpBindOptions {
     }
 
     pub fn hole_punch_control() -> Self {
-        Self::for_purpose(UdpSocketPurpose::HolePunchControl)
+        Self::for_purpose(UdpSocketPurpose::HolePunchControl).with_need_protect(false)
     }
 
     pub fn hole_punch_candidate() -> Self {
@@ -260,15 +254,19 @@ impl UdpBindOptions {
     }
 
     pub fn socks5() -> Self {
-        Self::for_purpose(UdpSocketPurpose::Socks5)
+        Self::for_purpose(UdpSocketPurpose::Socks5).with_need_protect(false)
     }
 
     pub fn port_forward(local_addr: SocketAddr) -> Self {
-        Self::for_purpose(UdpSocketPurpose::PortForward).with_local_addr(Some(local_addr))
+        Self::for_purpose(UdpSocketPurpose::PortForward)
+            .with_need_protect(false)
+            .with_local_addr(Some(local_addr))
     }
 
     pub fn port_lease(local_addr: SocketAddr) -> Self {
-        Self::for_purpose(UdpSocketPurpose::PortLease).with_local_addr(Some(local_addr))
+        Self::for_purpose(UdpSocketPurpose::PortLease)
+            .with_need_protect(false)
+            .with_local_addr(Some(local_addr))
     }
 
     pub fn with_local_addr(mut self, local_addr: Option<SocketAddr>) -> Self {
@@ -319,7 +317,9 @@ impl UdpBindOptions {
 
 impl Default for UdpBindOptions {
     fn default() -> Self {
-        Self::hole_punch_control()
+        // Preserve the existing default purpose/socket setup, but only the
+        // explicit hole_punch_control constructor opts out of VPN bypass.
+        Self::for_purpose(UdpSocketPurpose::HolePunchControl)
     }
 }
 
@@ -331,6 +331,7 @@ mod option_tests {
     fn udp_constructor_protection_defaults_match_endpoint_role() {
         let local = SocketAddr::from(([0, 0, 0, 0], 11010));
 
+        assert!(UdpBindOptions::default().need_protect);
         assert!(!UdpBindOptions::hole_punch_control().need_protect);
         assert!(UdpBindOptions::hole_punch_candidate().need_protect);
         assert!(UdpBindOptions::direct_connect().need_protect);
@@ -343,12 +344,17 @@ mod option_tests {
     }
 
     #[test]
-    fn udp_bind_serde_defaults_need_protect_to_false() {
+    fn udp_bind_serde_defaults_to_protected_and_preserves_opt_out() {
         let options: UdpBindOptions = serde_json::from_str(
             r#"{"local_addr":null,"bind_device":null,"reuse_addr":false,"reuse_port":false,"only_v6":false,"purpose":"DirectConnect"}"#,
         )
         .unwrap();
-        assert!(!options.need_protect);
+        assert!(options.need_protect);
+        let local = UdpBindOptions::port_forward("0.0.0.0:15555".parse().unwrap());
+        let restored: UdpBindOptions =
+            serde_json::from_str(&serde_json::to_string(&local).unwrap()).unwrap();
+        assert_eq!(restored, local);
+        assert!(!restored.need_protect);
     }
 }
 

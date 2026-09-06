@@ -518,8 +518,7 @@ async fn resolve_internal_addr(
 
     let ip = if host.is_unspecified() {
         let options = easytier_core::socket::udp::UdpBindOptions::default()
-            .with_local_addr(Some("0.0.0.0:0".parse().unwrap()))
-            .with_need_protect(true);
+            .with_local_addr(Some("0.0.0.0:0".parse().unwrap()));
         let udp =
             crate::socket::udp::create_udp_socket(&options, NativeSocketPurpose::UpnpRouteProbe)
                 .await

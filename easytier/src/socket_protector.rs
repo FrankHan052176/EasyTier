@@ -207,9 +207,7 @@ mod tests {
         TEST_SOCKET_PROTECTOR
             .scope(protector.clone(), async {
                 let local = "127.0.0.1:0".parse().unwrap();
-                let bind = TcpBindOptions::default()
-                    .with_local_addr(Some(local))
-                    .with_need_protect(true);
+                let bind = TcpBindOptions::default().with_local_addr(Some(local));
                 assert!(
                     crate::socket::tcp::create_tcp_socket(
                         local,
@@ -232,14 +230,20 @@ mod tests {
                 );
                 assert_eq!(protector.calls.load(Ordering::SeqCst), 3);
 
-                let listener =
-                    crate::socket::tcp::bind_tcp_listener(TcpListenOptions::port_forward(local))
+                for options in [
+                    TcpListenOptions::proxy_nat(local),
+                    TcpListenOptions::socks5(local),
+                    TcpListenOptions::port_forward(local),
+                    TcpListenOptions::port_lease(local),
+                ] {
+                    let listener = crate::socket::tcp::bind_tcp_listener(options)
                         .await
                         .unwrap();
-                let connect = TcpConnectOptions::direct_connect(listener.local_addr().unwrap())
-                    .with_bind(TcpBindOptions::default().with_need_protect(false));
-                let _client = crate::socket::tcp::connect_tcp(connect).await.unwrap();
-                listener.accept().await.unwrap();
+                    let connect = TcpConnectOptions::direct_connect(listener.local_addr().unwrap())
+                        .with_bind(TcpBindOptions::default().with_need_protect(false));
+                    let _client = crate::socket::tcp::connect_tcp(connect).await.unwrap();
+                    listener.accept().await.unwrap();
+                }
                 let udp = udp.with_need_protect(false);
                 crate::socket::udp::create_udp_socket(&udp, NativeSocketPurpose::DnsUdp)
                     .await

@@ -119,8 +119,7 @@ impl ConnectorRuntime for NativeHostRuntime {
         };
         let options = UdpBindOptions::default()
             .with_context(context)
-            .with_local_addr(Some(bind_addr))
-            .with_need_protect(true);
+            .with_local_addr(Some(bind_addr));
         let socket =
             crate::socket::udp::create_udp_socket(&options, NativeSocketPurpose::RouteProbe)
                 .await?;

@@ -18,13 +18,29 @@ the requirement as a no-op.
 - Local ProxyNat/SOCKS/port-forward/port-lease listeners do not request it.
 - UDP transport, candidates, listeners, NAT egress and STUN request protection;
   HolePunchControl, local SOCKS/port-forward and port-lease sockets do not.
-- The low-level `TcpBindOptions::default()` is unprotected. `with_bind()` replaces
-  the **entire** bind object; callers constructing an outbound replacement must
-  preserve/set `need_protect`. `with_need_protect(false)` is an explicit override,
-  not something a native adapter should silently replace based on `purpose`.
+- Low-level TCP/UDP bind options default to protection, including deserialization
+  of options without `need_protect`. The named local/TUN-facing constructors set
+  `false` explicitly. The UDP default keeps its historical purpose label for
+  socket setup; only the named `hole_punch_control()` constructor opts out.
+- `with_bind()` replaces the **entire** bind object. A local listener's replacement
+  must retain its opt-out rather than inherit the protected default. A native
+  adapter must honor explicit `false`, not silently change it based on `purpose`.
 - DNS and source-route queries are already host-owned operations. A bypass-enabled
   host must protect their underlying sockets before querying/probing, including
   DNS TCP fallback, rather than letting system DNS silently bypass this contract.
+
+## TUN-facing ingress and port forwarding
+
+The extra `force_smoltcp` wildcard port-forward ingress listener has been removed.
+Normal TUN-backed ingress is delivered to the existing unprotected native listener;
+its accepted sockets remain unprotected so overlay replies can return through TUN.
+The physical/underlay egress socket is protected independently. A separate
+DataPlane listener must not mask broken host/TUN routing in this path.
+
+This does not remove the existing public DataPlane listener APIs, the generic
+no-TUN smoltcp TCP proxy, or `force_smoltcp` itself. Those have other uses. Whether
+Android subnet proxy works without forced smoltcp needs actual platform regression
+testing; socket-creation unit tests alone do not establish that result.
 
 ## Native integration and HarmonyOS
 

@@ -104,7 +104,7 @@ fn bind_options_constructors_describe_socket_purpose() {
     );
     assert_eq!(
         UdpBindOptions::default(),
-        UdpBindOptions::hole_punch_control()
+        UdpBindOptions::hole_punch_control().with_need_protect(true)
     );
 }
 

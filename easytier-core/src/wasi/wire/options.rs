@@ -220,8 +220,7 @@ mod tests {
                 .with_bind_device(Some("device0".to_owned()))
                 .with_reuse_addr(true)
                 .with_reuse_port(true)
-                .with_only_v6(true)
-                .with_need_protect(true),
+                .with_only_v6(true),
             purpose: TcpSocketPurpose::ManualConnect,
         };
         let encoded = encode_tcp_connect_options(&options).unwrap();

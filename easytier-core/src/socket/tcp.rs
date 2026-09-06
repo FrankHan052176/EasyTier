@@ -57,8 +57,9 @@ pub struct TcpBindOptions {
     pub context: SocketContext,
     /// Request host VPN bypass during creation, before bind/connect/listen.
     /// Hosts with a protection service must await its acknowledgement; local
-    /// listeners can opt out. Accepted children inherit this requirement.
-    #[serde(default)]
+    /// listeners opt out explicitly. Defaults to true, including when omitted
+    /// from serialized options. Accepted children inherit this requirement.
+    #[serde(default = "super::default_need_protect")]
     pub need_protect: bool,
     pub local_addr: Option<SocketAddr>,
     pub bind_device: Option<String>,
@@ -72,7 +73,7 @@ impl TcpBindOptions {
     pub fn new() -> Self {
         Self {
             context: SocketContext::default(),
-            need_protect: false,
+            need_protect: super::default_need_protect(),
             local_addr: None,
             bind_device: None,
             reuse_addr: None,
@@ -144,7 +145,7 @@ impl TcpConnectOptions {
     pub fn direct_connect(remote_addr: SocketAddr) -> Self {
         Self {
             remote_addr,
-            bind: TcpBindOptions::default().with_need_protect(true),
+            bind: TcpBindOptions::default(),
             purpose: TcpSocketPurpose::DirectConnect,
         }
     }
@@ -157,9 +158,7 @@ impl TcpConnectOptions {
     pub fn hole_punch(remote_addr: SocketAddr, local_addr: Option<SocketAddr>) -> Self {
         Self {
             remote_addr,
-            bind: TcpBindOptions::default()
-                .with_need_protect(true)
-                .with_local_addr(local_addr),
+            bind: TcpBindOptions::default().with_local_addr(local_addr),
             purpose: TcpSocketPurpose::HolePunch,
         }
     }
@@ -167,9 +166,7 @@ impl TcpConnectOptions {
     pub fn manual_connect(remote_addr: SocketAddr, local_addr: Option<SocketAddr>) -> Self {
         Self {
             remote_addr,
-            bind: TcpBindOptions::default()
-                .with_need_protect(true)
-                .with_local_addr(local_addr),
+            bind: TcpBindOptions::default().with_local_addr(local_addr),
             purpose: TcpSocketPurpose::ManualConnect,
         }
     }
@@ -177,7 +174,7 @@ impl TcpConnectOptions {
     pub fn proxy_nat(remote_addr: SocketAddr) -> Self {
         Self {
             remote_addr,
-            bind: TcpBindOptions::default().with_need_protect(true),
+            bind: TcpBindOptions::default(),
             purpose: TcpSocketPurpose::ProxyNat,
         }
     }
@@ -185,9 +182,7 @@ impl TcpConnectOptions {
     pub fn stun_probe(remote_addr: SocketAddr, local_addr: SocketAddr) -> Self {
         Self {
             remote_addr,
-            bind: TcpBindOptions::default()
-                .with_need_protect(true)
-                .with_local_addr(Some(local_addr)),
+            bind: TcpBindOptions::default().with_local_addr(Some(local_addr)),
             purpose: TcpSocketPurpose::StunProbe,
         }
     }
@@ -246,55 +241,57 @@ pub struct TcpListenOptions {
 impl TcpListenOptions {
     pub fn direct_connect(local_addr: SocketAddr) -> Self {
         Self {
-            bind: TcpBindOptions::default()
-                .with_need_protect(true)
-                .with_local_addr(Some(local_addr)),
+            bind: TcpBindOptions::default().with_local_addr(Some(local_addr)),
             purpose: TcpListenPurpose::DirectConnect,
         }
     }
 
     pub fn hole_punch(local_addr: SocketAddr) -> Self {
         Self {
-            bind: TcpBindOptions::default()
-                .with_need_protect(true)
-                .with_local_addr(Some(local_addr)),
+            bind: TcpBindOptions::default().with_local_addr(Some(local_addr)),
             purpose: TcpListenPurpose::HolePunch,
         }
     }
 
     pub fn manual_connect(local_addr: SocketAddr) -> Self {
         Self {
-            bind: TcpBindOptions::default()
-                .with_need_protect(true)
-                .with_local_addr(Some(local_addr)),
+            bind: TcpBindOptions::default().with_local_addr(Some(local_addr)),
             purpose: TcpListenPurpose::ManualConnect,
         }
     }
 
     pub fn proxy_nat(local_addr: SocketAddr) -> Self {
         Self {
-            bind: TcpBindOptions::default().with_local_addr(Some(local_addr)),
+            bind: TcpBindOptions::default()
+                .with_need_protect(false)
+                .with_local_addr(Some(local_addr)),
             purpose: TcpListenPurpose::ProxyNat,
         }
     }
 
     pub fn socks5(local_addr: SocketAddr) -> Self {
         Self {
-            bind: TcpBindOptions::default().with_local_addr(Some(local_addr)),
+            bind: TcpBindOptions::default()
+                .with_need_protect(false)
+                .with_local_addr(Some(local_addr)),
             purpose: TcpListenPurpose::Socks5,
         }
     }
 
     pub fn port_forward(local_addr: SocketAddr) -> Self {
         Self {
-            bind: TcpBindOptions::default().with_local_addr(Some(local_addr)),
+            bind: TcpBindOptions::default()
+                .with_need_protect(false)
+                .with_local_addr(Some(local_addr)),
             purpose: TcpListenPurpose::PortForward,
         }
     }
 
     pub fn port_lease(local_addr: SocketAddr) -> Self {
         Self {
-            bind: TcpBindOptions::default().with_local_addr(Some(local_addr)),
+            bind: TcpBindOptions::default()
+                .with_need_protect(false)
+                .with_local_addr(Some(local_addr)),
             purpose: TcpListenPurpose::PortLease,
         }
     }
@@ -544,7 +541,7 @@ mod tests {
             TcpConnectOptions::direct_connect(remote_addr),
             TcpConnectOptions {
                 remote_addr,
-                bind: TcpBindOptions::default().with_need_protect(true),
+                bind: TcpBindOptions::default(),
                 purpose: TcpSocketPurpose::DirectConnect,
             }
         );
@@ -552,9 +549,7 @@ mod tests {
             TcpConnectOptions::hole_punch(remote_addr, Some(local_addr)),
             TcpConnectOptions {
                 remote_addr,
-                bind: TcpBindOptions::default()
-                    .with_need_protect(true)
-                    .with_local_addr(Some(local_addr)),
+                bind: TcpBindOptions::default().with_local_addr(Some(local_addr)),
                 purpose: TcpSocketPurpose::HolePunch,
             }
         );
@@ -562,9 +557,7 @@ mod tests {
             TcpConnectOptions::manual_connect(remote_addr, Some(local_addr)),
             TcpConnectOptions {
                 remote_addr,
-                bind: TcpBindOptions::default()
-                    .with_need_protect(true)
-                    .with_local_addr(Some(local_addr)),
+                bind: TcpBindOptions::default().with_local_addr(Some(local_addr)),
                 purpose: TcpSocketPurpose::ManualConnect,
             }
         );
@@ -572,7 +565,7 @@ mod tests {
             TcpConnectOptions::proxy_nat(remote_addr),
             TcpConnectOptions {
                 remote_addr,
-                bind: TcpBindOptions::default().with_need_protect(true),
+                bind: TcpBindOptions::default(),
                 purpose: TcpSocketPurpose::ProxyNat,
             }
         );
@@ -580,9 +573,7 @@ mod tests {
             TcpConnectOptions::stun_probe(remote_addr, local_addr),
             TcpConnectOptions {
                 remote_addr,
-                bind: TcpBindOptions::default()
-                    .with_need_protect(true)
-                    .with_local_addr(Some(local_addr)),
+                bind: TcpBindOptions::default().with_local_addr(Some(local_addr)),
                 purpose: TcpSocketPurpose::StunProbe,
             }
         );
@@ -620,34 +611,30 @@ mod tests {
         assert_eq!(
             TcpListenOptions::direct_connect(local_addr),
             TcpListenOptions {
-                bind: TcpBindOptions::default()
-                    .with_need_protect(true)
-                    .with_local_addr(Some(local_addr)),
+                bind: TcpBindOptions::default().with_local_addr(Some(local_addr)),
                 purpose: TcpListenPurpose::DirectConnect,
             }
         );
         assert_eq!(
             TcpListenOptions::hole_punch(local_addr),
             TcpListenOptions {
-                bind: TcpBindOptions::default()
-                    .with_need_protect(true)
-                    .with_local_addr(Some(local_addr)),
+                bind: TcpBindOptions::default().with_local_addr(Some(local_addr)),
                 purpose: TcpListenPurpose::HolePunch,
             }
         );
         assert_eq!(
             TcpListenOptions::manual_connect(local_addr),
             TcpListenOptions {
-                bind: TcpBindOptions::default()
-                    .with_need_protect(true)
-                    .with_local_addr(Some(local_addr)),
+                bind: TcpBindOptions::default().with_local_addr(Some(local_addr)),
                 purpose: TcpListenPurpose::ManualConnect,
             }
         );
         assert_eq!(
             TcpListenOptions::proxy_nat(local_addr),
             TcpListenOptions {
-                bind: TcpBindOptions::default().with_local_addr(Some(local_addr)),
+                bind: TcpBindOptions::default()
+                    .with_need_protect(false)
+                    .with_local_addr(Some(local_addr)),
                 purpose: TcpListenPurpose::ProxyNat,
             }
         );
@@ -668,7 +655,7 @@ mod tests {
             options,
             TcpBindOptions {
                 context: SocketContext::default().with_socket_mark(Some(7)),
-                need_protect: false,
+                need_protect: true,
                 local_addr: Some(local_addr),
                 bind_device: Some("eth0".to_owned()),
                 reuse_addr: Some(true),
@@ -681,7 +668,7 @@ mod tests {
     #[test]
     fn tcp_bind_default_delegates_reuse_addr_policy_to_host() {
         assert_eq!(TcpBindOptions::default().reuse_addr, None);
-        assert!(!TcpBindOptions::default().need_protect);
+        assert!(TcpBindOptions::default().need_protect);
     }
 
     #[test]
@@ -701,12 +688,17 @@ mod tests {
     }
 
     #[test]
-    fn tcp_bind_serde_defaults_need_protect_to_false() {
+    fn tcp_bind_serde_defaults_to_protected_and_preserves_opt_out() {
         let options: TcpBindOptions = serde_json::from_str(
             r#"{"local_addr":null,"bind_device":null,"reuse_addr":null,"reuse_port":false,"only_v6":false}"#,
         )
         .unwrap();
-        assert!(!options.need_protect);
+        assert!(options.need_protect);
+        let local = TcpListenOptions::port_forward("0.0.0.0:15555".parse().unwrap());
+        let restored: TcpListenOptions =
+            serde_json::from_str(&serde_json::to_string(&local).unwrap()).unwrap();
+        assert_eq!(restored, local);
+        assert!(!restored.bind.need_protect);
     }
 
     #[tokio::test]
