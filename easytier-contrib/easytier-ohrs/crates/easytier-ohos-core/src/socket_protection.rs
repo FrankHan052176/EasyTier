@@ -6,9 +6,7 @@ use std::{
 };
 
 use async_trait::async_trait;
-use easytier::socket_protector::{
-    NativeSocketProtector, NativeSocketPurpose, set_native_socket_protector,
-};
+use easytier::socket_protector::{NativeSocketProtector, set_native_socket_protector};
 use once_cell::sync::Lazy;
 use tokio::sync::{Notify, oneshot};
 
@@ -121,10 +119,7 @@ impl SocketProtectionManager {
 
 #[async_trait]
 impl NativeSocketProtector for SocketProtectionManager {
-    async fn protect(&self, socket_handle: u64, purpose: NativeSocketPurpose) -> io::Result<()> {
-        // Core's bind options decide whether protection is needed. The native
-        // creation path calls us only when requested; do not infer policy again
-        // from diagnostic purpose labels and accidentally ignore an override.
+    async fn protect(&self, socket_handle: u64) -> io::Result<()> {
         let socket_fd = i32::try_from(socket_handle).map_err(|_| {
             io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -159,7 +154,8 @@ impl NativeSocketProtector for SocketProtectionManager {
             state.queued.push_back(SocketProtectionRequest {
                 request_id,
                 socket_fd: protected_fd,
-                purpose: format!("{purpose:?}"),
+                // Keep the existing ArkTS request shape without native policy labels.
+                purpose: "socket".to_owned(),
             });
             state.pending.insert(
                 request_id,
@@ -203,7 +199,6 @@ pub fn fail_socket_protection() -> bool {
 mod tests {
     use super::*;
     use easytier::socket_protector::NativeSocketProtector;
-    use easytier_core::socket::tcp::TcpSocketPurpose;
     use std::os::fd::AsRawFd;
 
     #[test]
@@ -219,14 +214,7 @@ mod tests {
             let socket_fd = socket.as_raw_fd();
             let task = tokio::spawn({
                 let manager = manager.clone();
-                async move {
-                    manager
-                        .protect(
-                            socket_fd as u64,
-                            NativeSocketPurpose::TcpConnect(TcpSocketPurpose::DirectConnect),
-                        )
-                        .await
-                }
+                async move { manager.protect(socket_fd as u64).await }
             });
             let request = manager.next_request().await.unwrap();
             assert_ne!(request.socket_fd, socket_fd);
@@ -248,11 +236,7 @@ mod tests {
             let socket_fd = socket.as_raw_fd();
             let task = tokio::spawn({
                 let manager = manager.clone();
-                async move {
-                    manager
-                        .protect(socket_fd as u64, NativeSocketPurpose::DnsUdp)
-                        .await
-                }
+                async move { manager.protect(socket_fd as u64).await }
             });
             let request = manager.next_request().await.unwrap();
 

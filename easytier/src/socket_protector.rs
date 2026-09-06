@@ -1,31 +1,14 @@
-use std::{io, sync::Arc};
+use std::{
+    io,
+    sync::{Arc, RwLock},
+};
 
 use async_trait::async_trait;
-use easytier_core::socket::{
-    tcp::{TcpListenPurpose, TcpSocketPurpose},
-    udp::UdpSocketPurpose,
-};
 
 #[cfg(unix)]
 use std::os::fd::AsRawFd;
 #[cfg(windows)]
 use std::os::windows::io::AsRawSocket;
-
-/// Describes why the native runtime created an operating-system socket.
-///
-/// Diagnostic labels for the native adapter, not the portable policy API.
-/// Whether protection is requested is carried by core's socket bind options.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NativeSocketPurpose {
-    TcpConnect(TcpSocketPurpose),
-    TcpListen(TcpListenPurpose),
-    TcpAccepted(TcpListenPurpose),
-    UdpBind(UdpSocketPurpose),
-    DnsTcp,
-    DnsUdp,
-    RouteProbe,
-    UpnpRouteProbe,
-}
 
 /// Native-only platform callback used by socket creation when `need_protect`
 /// is set. The future must resolve only after protection is actually applied;
@@ -36,12 +19,10 @@ pub enum NativeSocketPurpose {
 /// creation operations, using core's encoded bind options, not this raw-FD API.
 #[async_trait]
 pub trait NativeSocketProtector: Send + Sync + 'static {
-    async fn protect(&self, socket_handle: u64, purpose: NativeSocketPurpose) -> io::Result<()>;
+    async fn protect(&self, socket_handle: u64) -> io::Result<()>;
 }
 
-static NATIVE_SOCKET_PROTECTOR: std::sync::LazyLock<
-    std::sync::RwLock<Option<Arc<dyn NativeSocketProtector>>>,
-> = std::sync::LazyLock::new(|| std::sync::RwLock::new(None));
+static NATIVE_SOCKET_PROTECTOR: RwLock<Option<Arc<dyn NativeSocketProtector>>> = RwLock::new(None);
 
 /// Installs or removes the process-wide native socket protection capability.
 ///
@@ -75,52 +56,23 @@ pub(crate) fn native_socket_protection_available() -> bool {
     native_socket_protector().is_some()
 }
 
-#[cfg(unix)]
-pub(crate) async fn protect_native_socket<S>(
-    socket: &S,
-    purpose: NativeSocketPurpose,
-) -> io::Result<()>
-where
-    S: AsRawFd + ?Sized,
-{
-    let Some(protector) = native_socket_protector() else {
+// socket2 owns the platform-specific handle; SockRef adapts Tokio sockets here.
+pub(crate) async fn protect_native_socket(
+    socket: &socket2::Socket,
+    need_protect: bool,
+) -> io::Result<()> {
+    if !need_protect {
         return Ok(());
-    };
-    let fd = socket.as_raw_fd();
-    if fd < 0 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "native socket has an invalid file descriptor",
-        ));
     }
-    protector.protect(fd as u64, purpose).await
-}
-
-#[cfg(windows)]
-pub(crate) async fn protect_native_socket<S>(
-    socket: &S,
-    purpose: NativeSocketPurpose,
-) -> io::Result<()>
-where
-    S: AsRawSocket + ?Sized,
-{
     let Some(protector) = native_socket_protector() else {
         return Ok(());
     };
-    protector
-        .protect(socket.as_raw_socket() as u64, purpose)
-        .await
-}
-
-#[cfg(not(any(unix, windows)))]
-pub(crate) async fn protect_native_socket<S>(
-    _socket: &S,
-    _purpose: NativeSocketPurpose,
-) -> io::Result<()>
-where
-    S: ?Sized,
-{
-    Ok(())
+    #[cfg(unix)]
+    let handle = u64::try_from(socket.as_raw_fd())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid socket fd"))?;
+    #[cfg(windows)]
+    let handle = socket.as_raw_socket() as u64;
+    protector.protect(handle).await
 }
 
 #[cfg(all(test, unix))]
@@ -141,25 +93,27 @@ mod tests {
         calls: AtomicUsize,
         gate: Semaphore,
         fail: bool,
+        expect_unbound: bool,
     }
 
     impl GateProtector {
-        fn new(fail: bool) -> Arc<Self> {
+        fn new(fail: bool, expect_unbound: bool) -> Arc<Self> {
             Arc::new(Self {
                 calls: AtomicUsize::new(0),
                 gate: Semaphore::new(0),
                 fail,
+                expect_unbound,
             })
         }
     }
 
     #[async_trait]
     impl NativeSocketProtector for GateProtector {
-        async fn protect(&self, handle: u64, purpose: NativeSocketPurpose) -> io::Result<()> {
+        async fn protect(&self, handle: u64) -> io::Result<()> {
             // The caller keeps the socket alive while this borrowed callback runs.
             let fd = unsafe { BorrowedFd::borrow_raw(i32::try_from(handle).unwrap()) };
             let socket = socket2::SockRef::from(&fd);
-            if !matches!(purpose, NativeSocketPurpose::TcpAccepted(_)) {
+            if self.expect_unbound || self.calls.load(Ordering::SeqCst) == 0 {
                 assert_eq!(socket.local_addr()?.as_socket().unwrap().port(), 0);
                 assert!(
                     socket.peer_addr().is_err(),
@@ -180,7 +134,7 @@ mod tests {
 
     #[tokio::test]
     async fn tcp_connect_waits_for_protection_ack() {
-        let protector = GateProtector::new(false);
+        let protector = GateProtector::new(false, true);
         TEST_SOCKET_PROTECTOR
             .scope(protector.clone(), async {
                 let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -203,19 +157,15 @@ mod tests {
 
     #[tokio::test]
     async fn protection_failure_blocks_creation_and_explicit_false_bypasses_callback() {
-        let protector = GateProtector::new(true);
+        let protector = GateProtector::new(true, true);
         TEST_SOCKET_PROTECTOR
             .scope(protector.clone(), async {
                 let local = "127.0.0.1:0".parse().unwrap();
                 let bind = TcpBindOptions::default().with_local_addr(Some(local));
                 assert!(
-                    crate::socket::tcp::create_tcp_socket(
-                        local,
-                        &bind,
-                        NativeSocketPurpose::DnsTcp
-                    )
-                    .await
-                    .is_err()
+                    crate::socket::tcp::create_tcp_socket(local, &bind)
+                        .await
+                        .is_err()
                 );
                 assert!(
                     crate::socket::tcp::bind_tcp_listener(TcpListenOptions::direct_connect(local))
@@ -223,11 +173,7 @@ mod tests {
                         .is_err()
                 );
                 let udp = UdpBindOptions::direct_connect().with_local_addr(Some(local));
-                assert!(
-                    crate::socket::udp::create_udp_socket(&udp, NativeSocketPurpose::DnsUdp)
-                        .await
-                        .is_err()
-                );
+                assert!(crate::socket::udp::create_udp_socket(&udp).await.is_err());
                 assert_eq!(protector.calls.load(Ordering::SeqCst), 3);
 
                 for options in [
@@ -245,9 +191,7 @@ mod tests {
                     listener.accept().await.unwrap();
                 }
                 let udp = udp.with_need_protect(false);
-                crate::socket::udp::create_udp_socket(&udp, NativeSocketPurpose::DnsUdp)
-                    .await
-                    .unwrap();
+                crate::socket::udp::create_udp_socket(&udp).await.unwrap();
                 assert_eq!(protector.calls.load(Ordering::SeqCst), 3);
             })
             .await;
@@ -255,15 +199,17 @@ mod tests {
 
     #[tokio::test]
     async fn accepted_child_waits_for_inherited_protection() {
-        let protector = GateProtector::new(false);
+        let protector = GateProtector::new(false, false);
         TEST_SOCKET_PROTECTOR
             .scope(protector.clone(), async {
+                let bind = crate::socket::tcp::bind_tcp_listener(TcpListenOptions::direct_connect(
+                    "127.0.0.1:0".parse().unwrap(),
+                ));
+                tokio::pin!(bind);
+                assert!(futures::poll!(&mut bind).is_pending());
+                assert_eq!(protector.calls.load(Ordering::SeqCst), 1);
                 protector.gate.add_permits(1);
-                let listener = crate::socket::tcp::bind_tcp_listener(
-                    TcpListenOptions::direct_connect("127.0.0.1:0".parse().unwrap()),
-                )
-                .await
-                .unwrap();
+                let listener = bind.await.unwrap();
                 let _client = tokio::net::TcpStream::connect(listener.local_addr().unwrap())
                     .await
                     .unwrap();

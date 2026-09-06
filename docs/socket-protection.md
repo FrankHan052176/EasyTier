@@ -46,15 +46,23 @@ testing; socket-creation unit tests alone do not establish that result.
 
 The native `easytier` adapter implements the creation requirement using an async
 `NativeSocketProtector` callback. This is a native implementation detail, not a
-new portable or WASI ABI. The callback's purpose is diagnostic; the creation
-options select policy. Namespace switching is confined to synchronous socket
+new portable or WASI ABI. It takes only the native handle; the creation options
+select policy, without a second purpose enum. Namespace switching is confined to synchronous socket
 creation and never held across the callback's await.
+
+The existing native `bind` builder is async and shared by TCP/UDP creation. Its
+legacy direct-call default remains unprotected; portable factories explicitly
+pass their core bind options (default protected). Callers must await `.call()`.
+TCP listeners reuse TCP socket creation then listen, instead of duplicating the
+setup. Existing legacy WebSocket direct-call policy is unchanged.
 
 The HarmonyOS broker wakes the already-pending request consumer with `Notify`
 (no polling timer). It keeps a duplicate FD alive until ArkTS completes
 `VpnConnection.protect(fd)` and returns its ACK. The waiting creation future is
 woken immediately by the oneshot acknowledgement. Failure stays fail-closed;
 shutdown retains dispatched FDs for late ACKs to prevent FD reuse races.
+The ArkTS request shape is unchanged; its diagnostic `purpose` string is now
+the generic `"socket"`. Neither ACK routing nor protection policy uses that label.
 
 This guarantees ordering, not a wall-clock real-time bound: OS/ArkTS scheduling
 can still delay protection. Such a delay keeps the socket unconnected; it must

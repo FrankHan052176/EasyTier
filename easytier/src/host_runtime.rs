@@ -28,7 +28,6 @@ use crate::{
         tcp::{RuntimeTcpListener, RuntimeTcpSocket},
         udp::{RuntimeUdpSocket, RuntimeUdpSocketFactory},
     },
-    socket_protector::NativeSocketPurpose,
 };
 
 /// Process-wide native implementation of the host capabilities consumed by core.
@@ -120,9 +119,7 @@ impl ConnectorRuntime for NativeHostRuntime {
         let options = UdpBindOptions::default()
             .with_context(context)
             .with_local_addr(Some(bind_addr));
-        let socket =
-            crate::socket::udp::create_udp_socket(&options, NativeSocketPurpose::RouteProbe)
-                .await?;
+        let socket = crate::socket::udp::create_udp_socket(&options).await?;
         socket.connect(remote_addr).await?;
         Ok(socket.local_addr()?)
     }

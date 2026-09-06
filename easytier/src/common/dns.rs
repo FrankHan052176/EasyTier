@@ -31,7 +31,7 @@ use super::netns::NetNS;
 #[cfg(feature = "dns-resolver")]
 use crate::{
     socket::{tcp::create_tcp_socket, udp::create_udp_socket},
-    socket_protector::{NativeSocketPurpose, native_socket_protection_available},
+    socket_protector::native_socket_protection_available,
 };
 #[cfg(feature = "dns-resolver")]
 use easytier_core::socket::{NetNamespace, tcp::TcpBindOptions, udp::UdpBindOptions};
@@ -222,7 +222,7 @@ impl RuntimeProvider for RuntimeDnsIoProvider {
         Box::pin(async move {
             let wait_for = wait_for.unwrap_or(Duration::from_secs(5));
             let connect = async {
-                let socket = create_tcp_socket(server_addr, &options, NativeSocketPurpose::DnsTcp)
+                let socket = create_tcp_socket(server_addr, &options)
                     .await
                     .map_err(io::Error::other)?;
                 socket.set_nodelay(true)?;
@@ -247,11 +247,7 @@ impl RuntimeProvider for RuntimeDnsIoProvider {
         let options = UdpBindOptions::default()
             .with_context(self.context.socket_context())
             .with_local_addr(Some(local_addr));
-        Box::pin(async move {
-            create_udp_socket(&options, NativeSocketPurpose::DnsUdp)
-                .await
-                .map_err(io::Error::other)
-        })
+        Box::pin(async move { create_udp_socket(&options).await.map_err(io::Error::other) })
     }
 }
 
